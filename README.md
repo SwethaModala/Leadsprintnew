@@ -1,0 +1,186 @@
+# LeadSprint
+
+AI speed-to-lead for small sales teams: the moment an enquiry arrives, an AI voice
+agent calls it back, qualifies it, and books a Cal.com appointment or transfers to a
+human — inside consent and quiet-hours limits, with an operator console. (Outbound
+follow-up only; inbound call answering is not yet supported.) See `docs/leadsprint-provider-setup.md` for the product
+architecture and `Coolify + Git + Collaboration Deploy Sheet` for the
+infra/collaboration workflow this repo is meant to be deployed with.
+
+## Stack
+
+pnpm monorepo · Express 5 API (`artifacts/api-server`) · React/Vite operator
+console (`artifacts/leadsprint`) · PostgreSQL via Drizzle ORM (`lib/db`) ·
+Clerk auth · OpenAPI-first contract with codegen (`lib/api-spec`,
+`lib/api-zod`, `lib/api-client-react`).
+
+## Industries (verticals)
+
+Each workspace runs an industry **profile** (`artifacts/api-server/src/lib/verticals`):
+the lead fields, urgency levels, appointment wording, qualification defaults and
+voice script that differ between industries. The engine (intake, consent, call queue,
+safety gate, booking) never branches on an industry; it reads the profile.
+
+| Vertical | Status | Docs |
+|---|---|---|
+| `real_estate` | Original behaviour, the default | `docs/retell-agent.md`, `docs/sales-demo.md` |
+| `home_services` (AC repair & plumbing) | Outbound callback to Meta and web leads, emergency alerts, service-area check | `docs/meta-lead-ads.md`, `docs/retell-agent-home-services.md`, `docs/sales-demo-home-services.md` |
+
+Design: `docs/superpowers/specs/2026-10-26-home-services-vertical-meta-leads-design.md`.
+
+## Demo (one command)
+
+The fastest way to see the product — no Docker, no cloud accounts, no real
+phone calls:
+
+```bash
+pnpm demo            # fresh-ish boot, reuses the existing demo database
+pnpm demo --reset    # boot with a fresh, re-seeded demo database
+pnpm demo --vertical home_services   # the AC & plumbing demo (implies --reset)
+```
+
+Boots embedded PostgreSQL, pushes the schema, starts Retell/Cal.com provider
+stubs, builds everything, and serves the seeded operator console on
+`http://localhost:5000/`. `Ctrl+C` stops all of it. Ports are overridable via
+`DEMO_PORT`, `DEV_PG_PORT`, `STUB_PORT`.
+
+For the scripted 10-minute sales walkthrough (the exact webhook commands,
+talking points, and live-phone-call setup), see
+[`docs/sales-demo.md`](docs/sales-demo.md).
+
+## Local development
+
+```bash
+corepack enable
+pnpm install
+pnpm --filter @workspace/db run migrate     # apply lib/db/drizzle migrations
+pnpm --filter @workspace/api-server run dev  # API on the port you set
+pnpm --filter @workspace/leadsprint run dev  # frontend Vite dev server (port 5173; proxies /api to 127.0.0.1:5000)
+```
+
+Requires `DATABASE_URL` at minimum. Missing Clerk credentials leave the
+operator API locked; missing Retell or Cal.com credentials block live calling
+and booking. Check `GET /api/readyz` for database and provider configuration.
+`PORT` and `BASE_PATH` have
+local defaults (`5173`, `/`); CI and the Dockerfile set them explicitly.
+
+### Running the console without Clerk (local only)
+
+The operator console is Clerk-gated, so with no Clerk instance the UI can't get
+past sign-in. For local work there's an explicitly gated bypass that runs the
+console against the seeded demo business with **no authentication at all**:
+
+```bash
+# API server (runtime)
+LEADSPRINT_DEMO_AUTH=true NODE_ENV=development
+# frontend (build/dev time — this is what removes the Clerk provider)
+VITE_LEADSPRINT_DEMO_AUTH=true
+```
+
+It is refused when `NODE_ENV=production` (logged as an error and ignored),
+logs a `WARN` at boot, surfaces as `"auth": "demo"` on `GET /api/readyz`, and
+paints a permanent banner across the console. Never set it on a deployment
+anyone else can reach.
+
+## Production deploy (Docker / Coolify)
+
+This repo builds to a single container that serves both the API and the
+built frontend on one port — the shape Coolify's "Git Repository" resource
+expects.
+
+After deploying, run `pnpm pilot:preflight https://your-domain` from a
+separate machine. It checks trusted HTTPS, database, Clerk mode, required
+pilot providers, anonymous API rejection, and the console route. It cannot
+replace a controlled real Retell call and Cal.com booking; see
+[`docs/paid-pilot-launch.md`](docs/paid-pilot-launch.md).
+
+```bash
+docker build -t leadsprint .
+docker run -p 5000:5000 --env-file .env leadsprint
+```
+
+On Coolify: **Add Resource → Git Repository (with GitHub App) → Dockerfile**
+build method, point at this repo's `main` branch, set the application port
+to `5000` (or whatever `PORT` you configure), and add the environment
+variables from `.env.example` in the Coolify UI. Full walkthrough in the
+deploy sheet PDF. The exact settings, a post-deploy checklist and a troubleshooting
+table built from real failed deploys are in [`docs/coolify-deploy.md`](docs/coolify-deploy.md).
+
+### Database
+
+The API applies its own migrations (`lib/db/drizzle`) on boot, so a normal
+deploy needs no separate step. To pre-provision from a machine that can
+reach the database — or as a Coolify one-off command — run the same
+migrator explicitly:
+
+```bash
+pnpm --filter @workspace/db run migrate
+```
+
+Do **not** use `drizzle-kit push` on a deployed database. `push` bypasses
+Drizzle's migration journal, so the app's boot migrator sees a
+migration-naive database, tries to replay `0000`, fails, and every later
+migration is silently blocked from ever applying. `migrate` and the
+migrator the app runs on boot share the same journal and are safe to run
+in any order or repeatedly.
+
+Already have a database that was created with `push`? Start the app once
+and it adopts it — it verifies every expected table is present, records the
+existing migrations as applied, and logs:
+
+```
+[db] This database already had the schema but no migration history
+     (provisioned outside the migrator, e.g. `drizzle-kit push`).
+     Recorded 1 existing migration(s) as applied so future migrations can run.
+```
+
+(`pnpm --filter @workspace/db run migrate` will still fail on such a
+database with `relation "activities" already exists` — it is the raw
+Drizzle CLI, with no adoption step. The app is the thing that adopts it.)
+
+### Scheduled jobs
+
+Four endpoints are meant to run on a schedule (Coolify → Scheduled Tasks,
+or any cron), authenticated with the `CRON_SECRET` env var via the
+`x-cron-secret` header — not a Clerk session:
+
+| Endpoint | Suggested schedule | What it does |
+|---|---|---|
+| `POST /api/cron/process-jobs` | every 5–10 min | Retries calls that were queued while Retell wasn't configured, or blocked by quiet hours — a quiet-hours retry is scheduled for the opening of the next allowed calling window, so an enquiry that arrives overnight is called in the morning. Each job is claimed atomically, so this endpoint and `ENABLE_INTERNAL_WORKER` can run side by side without dialing twice. The safety policy is re-checked on every attempt. |
+| `POST /api/cron/weekly-report` | weekly | Emails each business owner their weekly numbers (no-ops per business if SMTP isn't configured). |
+| `POST /api/cron/health-alerts` | every 15 min | Emails `ALERT_EMAIL` when a workspace has failed/uncertain calls piling up (`ALERT_FAILED_CALLS_THRESHOLD`, default 3 in 24h) or a job queue nothing is draining. Always answers 200 with the findings; `notified` says whether a human was emailed. |
+| `POST /api/cron/retention` | daily | Prunes raw provider-event payloads and stale activity rows past `RETENTION_DAYS`. Never touches leads, calls, contacts, or appointments. |
+
+```bash
+curl -X POST https://your-domain/api/cron/process-jobs \
+  -H "x-cron-secret: $CRON_SECRET"
+```
+
+### Health checks
+
+- `GET /api/healthz` — liveness, no dependencies.
+- `GET /api/readyz` — reports demo vs. live mode per provider, plus which auth
+  mode is active (`clerk` / `demo` / `unconfigured`). Both work without Clerk
+  configured; only the operator-console routes under `requireAuth` need a
+  Clerk session, and they answer 401 (not 500) when Clerk is unset.
+
+### Behind a reverse proxy
+
+Set `TRUST_PROXY` to the number of proxy hops in front of the app (default
+`1`, which matches Coolify/Traefik). It has to be right: `req.protocol` and
+`req.ip` feed the Twilio webhook signature check, which is computed over the
+public `https://` URL. Use `TRUST_PROXY=false` when the app is exposed
+directly.
+
+## Safety policy
+
+Every outbound call goes through `artifacts/api-server/src/lib/policy.ts`
+before any provider request is made: consent → suppression → quiet hours →
+attempt limit → `LEADSPRINT_KILL_SWITCH`. Blocked attempts are recorded as
+`policy_blocked` calls with a reason, visible in the operator console.
+
+## CI
+
+`.github/workflows/ci.yml` runs `pnpm run typecheck` and builds both the
+API server and the frontend on every push/PR to `main` — this is the check
+that would have caught a build-breaking bug before it reached main.
