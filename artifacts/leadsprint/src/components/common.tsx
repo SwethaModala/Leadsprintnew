@@ -527,9 +527,9 @@ export function TableHead({ children, className = '' }: { children?: ReactNode; 
   );
 }
 
-export function TableCell({ children, className = '' }: { children?: ReactNode; className?: string }) {
+export function TableCell({ children, className = '', colSpan }: { children?: ReactNode; className?: string; colSpan?: number }) {
   return (
-    <td className={`px-5 py-4 align-middle text-[var(--prise-text,#142b36)] ${className}`}>
+    <td colSpan={colSpan} className={`px-5 py-4 align-middle text-[var(--prise-text,#142b36)] ${className}`}>
       {children}
     </td>
   );

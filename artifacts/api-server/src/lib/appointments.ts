@@ -12,7 +12,9 @@ import {
   getCalAvailability,
   providerConfig,
   ProviderRequestError,
+  type CalcomCredentialOverride,
 } from "./providers";
+import { loadTenantProviderSecrets } from "./security";
 import { recordBooking } from "./usage";
 
 function id(prefix: string): string {
@@ -32,9 +34,10 @@ export function __resetAppointmentsDb(): void {
   db = defaultDb;
 }
 
-export function hasCalConfig(): boolean {
+export function hasCalConfig(credentials?: CalcomCredentialOverride | null): boolean {
   const config = providerConfig().calcom;
-  return Boolean(config.apiKey && config.eventTypeId);
+  const cred = credentials ?? undefined;
+  return Boolean((cred?.api_key ?? config.apiKey) && (cred?.event_type_id ?? config.eventTypeId));
 }
 
 /**
@@ -89,12 +92,18 @@ export class AvailabilityError extends Error {
 export async function getAvailabilityForBusiness(businessId: string, date: string) {
   const [business] = await db.select().from(businessesTable).where(eq(businessesTable.id, businessId));
   const timezone = business?.timezone ?? "UTC";
-  if (hasCalConfig()) {
+  let calCredentials: CalcomCredentialOverride | null = null;
+  try {
+    calCredentials = (await loadTenantProviderSecrets(db, businessId, "calcom")) as CalcomCredentialOverride | null;
+  } catch {
+    calCredentials = null;
+  }
+  if (hasCalConfig(calCredentials)) {
     const start = new Date(`${date}T00:00:00Z`);
     const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
     try {
       const slots = normalizedCalSlots(
-        await getCalAvailability({ start: start.toISOString(), end: end.toISOString(), timeZone: timezone }),
+        await getCalAvailability({ start: start.toISOString(), end: end.toISOString(), timeZone: timezone, credentials: calCredentials }),
         timezone,
       );
       if (!slots.length) throw new AvailabilityError("Cal.com returned no usable availability", 502);
@@ -153,10 +162,16 @@ export async function bookAppointmentForLead(input: {
   if (!lead) throw new BookingError("Lead not found", 404);
 
   const [business] = await db.select().from(businessesTable).where(eq(businessesTable.id, businessId));
+  let calCredentials: CalcomCredentialOverride | null = null;
+  try {
+    calCredentials = (await loadTenantProviderSecrets(db, businessId, "calcom")) as CalcomCredentialOverride | null;
+  } catch {
+    calCredentials = null;
+  }
   const appointmentId = id("appointment");
   let externalId = `cal_${appointmentId}`;
 
-  if (!hasCalConfig() && !simulatedAvailabilityAllowed()) {
+  if (!hasCalConfig(calCredentials) && !simulatedAvailabilityAllowed()) {
     // Never write an appointment row the real calendar knows nothing
     // about. An unbookable workspace must fail loudly so the agent falls
     // back to a transfer or a message instead of fabricating a
@@ -167,13 +182,14 @@ export async function bookAppointmentForLead(input: {
     );
   }
 
-  if (hasCalConfig()) {
+  if (hasCalConfig(calCredentials)) {
     try {
       const booking = await createCalBooking({
         start: slotStart.toISOString(),
         timeZone: business?.timezone ?? "UTC",
         attendee: { name: lead.contact.name, email: lead.contact.email ?? `${lead.contact.id}@lead.local`, phoneNumber: lead.contact.phone },
         metadata: { business_id: businessId, lead_id: leadId },
+        credentials: calCredentials,
       });
       externalId = booking.bookingId;
     } catch (error) {

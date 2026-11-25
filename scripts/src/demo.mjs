@@ -219,7 +219,7 @@ async function main() {
     // Seeded demo workspace + unauthenticated console. Local use only.
     LEADSPRINT_DEMO_AUTH: "true",
     LEADSPRINT_DEMO_SEED: "true",
-    LEAD_INTAKE_WEBHOOK_SECRET: "devsecret",
+    APP_ENCRYPTION_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     CRON_SECRET: "devcron",
     // Live calling and booking routed to the stubs, never the real APIs.
     RETELL_API_URL: `http://127.0.0.1:${STUB_PORT}/retell`,

@@ -10,6 +10,7 @@ import { shadcn } from "@clerk/themes";
 import {
   AlertTriangle,
   BarChart3,
+  Bot,
   CalendarDays,
   Compass,
   LayoutDashboard,
@@ -19,6 +20,7 @@ import {
   Settings,
   ShieldCheck,
   UsersRound,
+  Wand2,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -48,6 +50,8 @@ import AppointmentsPage from "@/pages/appointments";
 import ReportsPage from "@/pages/reports";
 import SettingsPage from "@/pages/settings";
 import ContactsPage from "@/pages/contacts";
+import AgentsPage from "@/pages/agents";
+import AgentBuilderPage from "@/pages/agent-builder";
 
 const queryClient = new QueryClient();
 
@@ -74,6 +78,13 @@ const navGroups: NavGroup[] = [
         label: "Appointments",
         icon: CalendarDays,
       },
+    ],
+  },
+  {
+    label: "Agents",
+    items: [
+      { href: "/workspace/agents", label: "AI Agents", icon: Bot },
+      { href: "/workspace/agent-builder", label: "Agent Builder", icon: Wand2 },
     ],
   },
   {
@@ -115,6 +126,16 @@ const pageMeta: Record<
     title: "Contacts",
     description:
       "Verified contact records, recipient timezones, and TCPA consent compliance.",
+  },
+  "/workspace/agents": {
+    eyebrow: "Console",
+    title: "AI Agents",
+    description: "Manage LeadSprint AI agents and Retell voice configurations.",
+  },
+  "/workspace/agent-builder": {
+    eyebrow: "Console",
+    title: "Agent Builder",
+    description: "Design conversational prompts, voices, LLM parameters, and tool integrations.",
   },
   "/workspace/teams": {
     eyebrow: "Organization",
@@ -657,6 +678,8 @@ function WorkspaceRoute() {
           <Route path="/workspace/contacts" component={ContactsPage} />
           <Route path="/workspace/leads" component={LeadsPage} />
           <Route path="/workspace/appointments" component={AppointmentsPage} />
+          <Route path="/workspace/agents" component={AgentsPage} />
+          <Route path="/workspace/agent-builder" component={AgentBuilderPage} />
           <Route path="/workspace/business-settings" component={SettingsPage} />
           <Route path="/workspace/teams" component={TeamsPage} />
           <Route path="/workspace/reports" component={ReportsPage} />

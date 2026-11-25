@@ -99,17 +99,71 @@ const AREA_CODE_TIMEZONES: Record<string, string> = {
 };
 
 /**
- * Extracts the NANP area code from an E.164-ish US number and returns its
- * IANA timezone, or `null` if the number isn't recognizably a US number or
- * the area code isn't in the table. Callers must treat `null` as "unknown"
- * — never substitute another timezone for it.
+ * Resolves the called party's IANA timezone from a phone number (supporting
+ * both US NANP area codes and India +91 IST numbers), returning `null` if
+ * unrecognized or invalid. Callers must treat `null` as "unknown" and fail
+ * closed — never guess or substitute the business's timezone.
  */
-export function timezoneForUSPhoneNumber(phone: string): string | null {
-  const digits = phone.replace(/[^\d]/g, "");
-  // Accept "+1XXXXXXXXXX", "1XXXXXXXXXX", or bare "XXXXXXXXXX".
+export function timezoneForPhoneNumber(
+  phone: string,
+  market: "US" | "IN" = "US",
+): string | null {
+  const trimmed = phone.trim();
+  if (!trimmed) return null;
+  const digits = trimmed.replace(/[^\d]/g, "");
+
+  // Explicit E.164 or country-prefixed India (+91XXXXXXXXXX): all of India observes IST.
+  if (trimmed.startsWith("+91")) {
+    if (digits.length === 12 && /^91[1-9]\d{9}$/.test(digits)) {
+      return "Asia/Kolkata";
+    }
+    return null;
+  }
+
+  // Explicit E.164 US/Canada (+1XXXXXXXXXX).
+  if (trimmed.startsWith("+1")) {
+    if (digits.length === 11 && digits.startsWith("1")) {
+      return AREA_CODE_TIMEZONES[digits.slice(1, 4)] ?? null;
+    }
+    return null;
+  }
+
+  // Other explicit E.164 country codes are not mapped here; fail closed.
+  if (trimmed.startsWith("+")) {
+    return null;
+  }
+
+  // Bare 12-digit 91XXXXXXXXXX India number (or local IN numbers when market === "IN").
+  if (digits.length === 12 && /^91[6-9]\d{9}$/.test(digits)) {
+    return "Asia/Kolkata";
+  }
+
+  if (market === "IN") {
+    if (digits.length === 10 && /^[6-9]\d{9}$/.test(digits)) {
+      return "Asia/Kolkata";
+    }
+    if (digits.length === 11 && /^0[6-9]\d{9}$/.test(digits)) {
+      return "Asia/Kolkata";
+    }
+    return null;
+  }
+
+  // US NANP without "+": "1XXXXXXXXXX" or bare "XXXXXXXXXX".
   const tenDigit =
-    digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits.length === 10 ? digits : null;
+    digits.length === 11 && digits.startsWith("1")
+      ? digits.slice(1)
+      : digits.length === 10
+        ? digits
+        : null;
   if (!tenDigit) return null;
   const areaCode = tenDigit.slice(0, 3);
   return AREA_CODE_TIMEZONES[areaCode] ?? null;
+}
+
+/**
+ * Legacy helper retained for compatibility; delegates to timezoneForPhoneNumber
+ * (including E.164 +91 -> Asia/Kolkata resolution).
+ */
+export function timezoneForUSPhoneNumber(phone: string): string | null {
+  return timezoneForPhoneNumber(phone, "US");
 }

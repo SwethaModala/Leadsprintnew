@@ -46,7 +46,7 @@ describe("GET /api/readyz database check", () => {
       RETELL_FROM_NUMBER_US: "+12125550100",
       CALCOM_API_KEY: "cal_test",
       CALCOM_EVENT_TYPE_ID: "event_test",
-      LEAD_INTAKE_WEBHOOK_SECRET: "intake_test",
+      APP_ENCRYPTION_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     })) vi.stubEnv(key, value);
     vi.stubEnv("TWILIO_ACCOUNT_SID", "");
     vi.stubEnv("LEADSPRINT_DEMO_AUTH", "false");

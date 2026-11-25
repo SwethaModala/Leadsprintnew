@@ -18,6 +18,7 @@ import {
 } from '@workspace/api-client-react';
 import { Badge, Button, ErrorState, PageHeader, Section, Select, Skeleton, Toggle, TextArea, Input } from '@/components/common';
 import { SetupChecklist } from '@/components/setup-checklist';
+import { SecuritySettingsPanel } from '@/components/SecuritySettingsPanel';
 
 function Field({
   label,
@@ -192,6 +193,7 @@ export default function SettingsPage() {
   };
 
   return (
+    <>
     <form onSubmit={save} className="animate-rise-in space-y-6">
       <PageHeader
         eyebrow="Console"
@@ -433,5 +435,7 @@ export default function SettingsPage() {
         </div>
       </Section>
     </form>
+    <SecuritySettingsPanel />
+    </>
   );
 }

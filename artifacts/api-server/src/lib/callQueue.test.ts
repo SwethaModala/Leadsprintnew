@@ -15,11 +15,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { and, eq } from "drizzle-orm";
 import {
+  activitiesTable,
+  agentsTable,
+  businessesTable,
   callsTable,
   contactsTable,
   leadsTable,
+  phoneNumbersTable,
   workflowJobsTable,
-  businessesTable,
 } from "@workspace/db/schema";
 import { createTestDb, pilotBusiness, type TestDb } from "../test/testDb";
 import {
@@ -332,5 +335,105 @@ describe("dispatchQueuedCall", () => {
       .from(callsTable)
       .where(and(eq(callsTable.id, callId), eq(callsTable.businessId, "business_pilot")));
     expect(row?.status).toBe("queued");
+  });
+
+  it("routes outbound call using tenant's active agent and phone number", async () => {
+    const { businessId, callId } = await queue();
+
+    const [agent] = await db
+      .insert(agentsTable)
+      .values({
+        id: "agt_pilot_active",
+        businessId,
+        name: "Sara Real Estate Qualifier",
+        status: "active",
+        retellAgentId: "retell_agent_custom_999",
+      })
+      .returning();
+
+    const [phone] = await db
+      .insert(phoneNumbersTable)
+      .values({
+        id: "pn_pilot_outbound",
+        businessId,
+        e164Number: "+14155559876",
+        outboundAgentId: agent!.id,
+        status: "active",
+      })
+      .returning();
+
+    const result = await dispatchQueuedCall({ businessId, callId });
+    expect(result.outcome).toBe("started");
+    expect(startRetellCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: "retell_agent_custom_999",
+        fromNumber: "+14155559876",
+      }),
+    );
+
+    const [row] = await db.select().from(callsTable).where(eq(callsTable.id, callId));
+    expect(row?.agentId).toBe(agent!.id);
+    expect(row?.phoneNumberId).toBe(phone!.id);
+    expect(row?.callerNumber).toBe("+14155559876");
+    expect(row?.direction).toBe("outbound");
+  });
+
+  it("fails safely if explicitly selected agent is inactive or belongs to another tenant", async () => {
+    const { businessId, callId } = await queue();
+
+    // Create a paused agent
+    const [pausedAgent] = await db
+      .insert(agentsTable)
+      .values({
+        id: "agt_paused",
+        businessId,
+        name: "Paused Agent",
+        status: "paused",
+        retellAgentId: "retell_paused_1",
+      })
+      .returning();
+
+    // Set call row to use this paused agent
+    await db.update(callsTable).set({ agentId: pausedAgent!.id }).where(eq(callsTable.id, callId));
+
+    const result = await dispatchQueuedCall({ businessId, callId });
+    expect(result.outcome).toBe("policy_blocked");
+    expect(result.policyReason).toBe("agent_paused");
+    expect(startRetellCall).not.toHaveBeenCalled();
+
+    // Now test cross-tenant invalid agent
+    await db.update(callsTable).set({ agentId: "agt_other_tenant_999", status: "queued" }).where(eq(callsTable.id, callId));
+    const result2 = await dispatchQueuedCall({ businessId, callId });
+    expect(result2.outcome).toBe("policy_blocked");
+    expect(result2.policyReason).toBe("invalid_agent");
+  });
+
+  it("fails safely if explicitly selected phone number is inactive or belongs to another tenant", async () => {
+    const { businessId, callId } = await queue();
+
+    // Create an inactive phone number
+    const [inactivePhone] = await db
+      .insert(phoneNumbersTable)
+      .values({
+        id: "pn_inactive",
+        businessId,
+        e164Number: "+14155550000",
+        status: "inactive",
+      })
+      .returning();
+
+    // Set call row to use this inactive phone number
+    await db.update(callsTable).set({ phoneNumberId: inactivePhone!.id }).where(eq(callsTable.id, callId));
+
+    const result = await dispatchQueuedCall({ businessId, callId });
+    expect(result.outcome).toBe("policy_blocked");
+    expect(result.policyReason).toBe("phone_number_inactive");
+    expect(startRetellCall).not.toHaveBeenCalled();
+
+    // Now test cross-tenant invalid phone number
+    await db.update(callsTable).set({ phoneNumberId: "pn_other_tenant_999", status: "queued" }).where(eq(callsTable.id, callId));
+    const result2 = await dispatchQueuedCall({ businessId, callId });
+    expect(result2.outcome).toBe("policy_blocked");
+    expect(result2.policyReason).toBe("invalid_phone_number");
   });
 });

@@ -78,6 +78,8 @@ export const contactsTable = pgTable("contacts", {
   // form's disclaimer), kept as evidence alongside the source and time.
   consentEvidence: text("consent_evidence"),
   suppressedAt: timestamp("suppressed_at", { withTimezone: true }),
+  dndStatus: text("dnd_status").notNull().default("unknown"),
+  consentCategory: text("consent_category").notNull().default("inquiry"),
   // Called-party IANA timezone, derived from the phone number's area code
   // at intake (see lib/areaCodeTimezones.ts). NULL means "we couldn't
   // determine it" — the policy gate blocks rather than guessing, since
@@ -131,6 +133,17 @@ export const callsTable = pgTable("calls", {
   transferred: boolean("transferred").notNull().default(false),
   booked: boolean("booked").notNull().default(false),
   errorState: text("error_state"),
+  // Phase 3 additions — all nullable for backward compat with existing rows
+  agentId: text("agent_id"),                                   // FK set post-insert; references agentsTable
+  phoneNumberId: text("phone_number_id"),                      // FK set post-insert; references phoneNumbersTable
+  direction: text("direction").notNull().default("outbound"),  // outbound | inbound
+  callerNumber: text("caller_number"),                         // E.164 of the caller (inbound)
+  destinationNumber: text("destination_number"),               // E.164 dialled
+  transcript: text("transcript"),                              // Plain-text transcript from Retell
+  transcriptJson: jsonb("transcript_json")                     // Structured [{role,content,...}]
+    .$type<Array<Record<string, unknown>>>(),
+  recordingUrl: text("recording_url"),
+  disconnectionReason: text("disconnection_reason"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => ({
   // Provider call ids are only unique within a tenant: two workspaces may
@@ -259,6 +272,127 @@ export const auditLogsTable = pgTable("audit_logs", {
   businessCreatedIdx: index("audit_logs_business_created_idx").on(table.businessId, table.createdAt),
 }));
 
+export const apiKeysTable = pgTable("api_keys", {
+  id: text("id").primaryKey(),
+  businessId: text("business_id").notNull().references(() => businessesTable.id, { onDelete: "cascade" }),
+  createdByUserId: text("created_by_user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  name: text("name").notNull(),
+  keyPrefix: text("key_prefix").notNull(),
+  keyHash: text("key_hash").notNull().unique(),
+  scopes: jsonb("scopes").$type<string[]>().notNull().default(["leads:intake"]),
+  lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  expiresAt: timestamp("expires_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => ({
+  businessCreatedIdx: index("api_keys_business_created_idx").on(table.businessId, table.createdAt),
+}));
+
+export const providerCredentialsTable = pgTable("provider_credentials", {
+  id: text("id").primaryKey(),
+  businessId: text("business_id").notNull().references(() => businessesTable.id, { onDelete: "cascade" }),
+  provider: text("provider").notNull(),
+  encryptedConfig: text("encrypted_config").notNull(),
+  keyVersion: integer("key_version").notNull().default(1),
+  metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
+}, (table) => ({
+  businessProviderUnique: uniqueIndex("provider_credentials_business_provider_unique").on(table.businessId, table.provider),
+}));
+
+// ---------------------------------------------------------------------------
+// Phase 3: AI Agents, Agent Versions, Phone Numbers
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-workspace AI agents, each linked to a Retell Agent + LLM pair.
+ * A workspace can have multiple agents (e.g. one for real-estate, one for
+ * home-services); only one is active on a given phone number at a time.
+ */
+export const agentsTable = pgTable("agents", {
+  id: text("id").primaryKey(),
+  businessId: text("business_id").notNull().references(() => businessesTable.id, { onDelete: "cascade" }),
+  createdByUserId: text("created_by_user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  name: text("name").notNull(),
+  useCase: text("use_case").notNull().default("real_estate_qualifier"),
+  status: text("status").notNull().default("draft"),          // draft | active | paused
+  language: text("language").notNull().default("en-US"),
+  retellAgentId: text("retell_agent_id"),                     // Retell Agent ID after create/link
+  retellLlmId: text("retell_llm_id"),                         // Retell LLM/response-engine ID
+  publishedVersion: integer("published_version"),
+  voiceId: text("voice_id"),
+  voiceModel: text("voice_model"),
+  voiceSpeed: numeric("voice_speed").default("1.0"),
+  voiceTemperature: numeric("voice_temperature").default("0.0"),
+  greeting: text("greeting").notNull().default(""),
+  systemPrompt: text("system_prompt").notNull().default(""),
+  fallbackMessage: text("fallback_message").notNull().default(
+    "Let me connect you with a team member who can help.",
+  ),
+  qualificationQuestions: jsonb("qualification_questions")
+    .$type<string[]>()
+    .notNull()
+    .default([]),
+  escalationRules: text("escalation_rules").notNull().default(
+    "Transfer questions outside approved business information to a human.",
+  ),
+  toolsConfig: jsonb("tools_config").$type<Record<string, unknown>>().notNull().default({}),
+  callBehavior: jsonb("call_behavior").$type<Record<string, unknown>>().notNull().default({}),
+  workingDays: text("working_days").array().notNull().default(["Mon", "Tue", "Wed", "Thu", "Fri"]),
+  hoursStart: text("hours_start").notNull().default("09:00"),
+  hoursEnd: text("hours_end").notNull().default("21:00"),
+  lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
+}, (table) => ({
+  // Prevent two workspaces from linking to the same Retell agent ID —
+  // an inbound call from Retell carries only an agent_id and would be
+  // ambiguous (and exploitable) if two tenants shared one.
+  retellAgentUnique: uniqueIndex("agents_business_retell_agent_unique").on(
+    table.businessId,
+    table.retellAgentId,
+  ),
+  businessStatusIdx: index("agents_business_status_idx").on(table.businessId, table.status),
+}));
+
+/**
+ * Immutable snapshots of agent config at each publish event, for rollback
+ * and audit.
+ */
+export const agentVersionsTable = pgTable("agent_versions", {
+  id: text("id").primaryKey(),
+  businessId: text("business_id").notNull().references(() => businessesTable.id, { onDelete: "cascade" }),
+  agentId: text("agent_id").notNull().references(() => agentsTable.id, { onDelete: "cascade" }),
+  versionNumber: integer("version_number").notNull(),
+  retellVersion: integer("retell_version"),
+  snapshot: jsonb("snapshot").$type<Record<string, unknown>>().notNull().default({}),
+  publishedByUserId: text("published_by_user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  publishedAt: timestamp("published_at", { withTimezone: true }).notNull().defaultNow(),
+  notes: text("notes"),
+});
+
+/**
+ * Phone numbers provisioned in Retell or Twilio, linked to inbound/outbound
+ * agents per workspace.
+ */
+export const phoneNumbersTable = pgTable("phone_numbers", {
+  id: text("id").primaryKey(),
+  businessId: text("business_id").notNull().references(() => businessesTable.id, { onDelete: "cascade" }),
+  provider: text("provider").notNull().default("retell"),    // retell | twilio
+  e164Number: text("e164_number").notNull().unique(),
+  nickname: text("nickname"),
+  market: text("market").notNull().default("US"),            // US | IN
+  inboundAgentId: text("inbound_agent_id").references(() => agentsTable.id, { onDelete: "set null" }),
+  outboundAgentId: text("outbound_agent_id").references(() => agentsTable.id, { onDelete: "set null" }),
+  status: text("status").notNull().default("active"),        // active | inactive
+  retellSyncedAt: timestamp("retell_synced_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
+}, (table) => ({
+  businessPhoneIdx: index("phone_numbers_business_idx").on(table.businessId),
+}));
+
 export const insertBusinessSchema = createInsertSchema(businessesTable);
 export const insertUserSchema = createInsertSchema(usersTable);
 export const insertContactSchema = createInsertSchema(contactsTable);
@@ -273,6 +407,11 @@ export const insertProviderEventSchema = createInsertSchema(providerEventsTable)
 export const insertMembershipSchema = createInsertSchema(membershipsTable);
 export const insertInvitationSchema = createInsertSchema(invitationsTable);
 export const insertAuditLogSchema = createInsertSchema(auditLogsTable);
+export const insertApiKeySchema = createInsertSchema(apiKeysTable);
+export const insertProviderCredentialSchema = createInsertSchema(providerCredentialsTable);
+export const insertAgentSchema = createInsertSchema(agentsTable);
+export const insertAgentVersionSchema = createInsertSchema(agentVersionsTable);
+export const insertPhoneNumberSchema = createInsertSchema(phoneNumbersTable);
 
 export type Business = z.infer<typeof insertBusinessSchema>;
 export type User = z.infer<typeof insertUserSchema>;
@@ -283,3 +422,8 @@ export type Appointment = z.infer<typeof insertAppointmentSchema>;
 export type Membership = z.infer<typeof insertMembershipSchema>;
 export type Invitation = z.infer<typeof insertInvitationSchema>;
 export type AuditLog = z.infer<typeof insertAuditLogSchema>;
+export type ApiKey = z.infer<typeof insertApiKeySchema>;
+export type ProviderCredential = z.infer<typeof insertProviderCredentialSchema>;
+export type Agent = z.infer<typeof insertAgentSchema>;
+export type AgentVersion = z.infer<typeof insertAgentVersionSchema>;
+export type PhoneNumber = z.infer<typeof insertPhoneNumberSchema>;

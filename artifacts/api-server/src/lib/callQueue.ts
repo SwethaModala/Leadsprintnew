@@ -24,20 +24,23 @@
  */
 
 import crypto from "node:crypto";
-import { and, eq, ne, sql } from "drizzle-orm";
+import { and, desc, eq, ne, sql } from "drizzle-orm";
 import {
   activitiesTable,
+  agentsTable,
   businessesTable,
   callsTable,
   contactsTable,
   db as defaultDb,
   leadsTable,
+  phoneNumbersTable,
   workflowJobsTable,
 } from "@workspace/db";
 import { evaluateCallPolicy, nextAllowedCallTime } from "./policy";
 import { isPhoneSuppressed } from "./suppression";
 import { buildCallVariables } from "./callVariables";
-import { hasRetellConfigForMarket, startRetellCall } from "./providers";
+import { hasRetellConfigForMarket, startRetellCall, type RetellCredentialOverride } from "./providers";
+import { loadTenantProviderSecrets } from "./security";
 import { liveCallingBlockedReason } from "./onboarding";
 import { logger } from "./logger";
 
@@ -255,8 +258,17 @@ export async function dispatchQueuedCall(input: {
     .where(eq(businessesTable.id, businessId));
   const market = business?.market === "IN" ? "IN" : "US";
 
+  let retellCredentials: RetellCredentialOverride | null = null;
+  try {
+    retellCredentials = (await loadTenantProviderSecrets(db, businessId, "retell")) as RetellCredentialOverride | null;
+  } catch (err) {
+    logger.warn({ businessId, err: err instanceof Error ? err.message : String(err) }, "Failed to load tenant Retell credentials");
+  }
+
   // Gate 1 — setup. Never dial from a half-configured workspace.
-  const setupBlocked = liveCallingBlockedReason(business);
+  const setupBlocked = liveCallingBlockedReason(business, {
+    retellConfigured: hasRetellConfigForMarket(market, retellCredentials),
+  });
   if (setupBlocked) {
     return {
       outcome: "setup_incomplete",
@@ -266,7 +278,7 @@ export async function dispatchQueuedCall(input: {
     };
   }
 
-  if (!hasRetellConfigForMarket(market)) {
+  if (!hasRetellConfigForMarket(market, retellCredentials)) {
     return {
       outcome: "provider_not_configured",
       call: attempt,
@@ -314,6 +326,7 @@ export async function dispatchQueuedCall(input: {
   // time) because consent, suppression and the clock all move.
   const decision = evaluateCallPolicy({
     business: {
+      market,
       timezone: business?.timezone ?? "UTC",
       quietHours: business?.quietHours,
       maxCallAttempts: business?.maxCallAttempts ?? 2,
@@ -321,9 +334,11 @@ export async function dispatchQueuedCall(input: {
     contact: {
       consentStatus: contact?.consentStatus ?? "unknown",
       suppressedAt: contact?.suppressedAt ?? null,
+      dndStatus: contact?.dndStatus ?? "unknown",
+      consentCategory: contact?.consentCategory ?? "inquiry",
       // Checked by NUMBER, not just this contact row: an opt-out recorded on
       // an earlier lead for the same phone must block this one too.
-      onSuppressionList: contact ? await isPhoneSuppressed(db, businessId, contact.phone) : false,
+      onSuppressionList: contact ? await isPhoneSuppressed(db, businessId, contact.phone, market) : false,
       timezone: contact?.timezone,
     },
     attemptsSoFar: priorAttempts,
@@ -359,7 +374,7 @@ export async function dispatchQueuedCall(input: {
       // enquired at 22:00 was never called at all.
       retryAt:
         decision.reason === "quiet_hours"
-          ? nextAllowedCallTime(business?.quietHours, contact?.timezone ?? "", new Date())
+          ? nextAllowedCallTime(business?.quietHours, contact?.timezone ?? "", new Date(), 5 * 60 * 1000, market)
           : undefined,
     };
   }
@@ -416,6 +431,138 @@ export async function dispatchQueuedCall(input: {
         })
       : undefined;
 
+  // Resolve outbound agent and caller phone number if configured
+  let selectedAgentId = attempt.agentId ?? null;
+  let retellAgentOverride: string | undefined = undefined;
+
+  if (selectedAgentId) {
+    const [agent] = await db
+      .select({ id: agentsTable.id, retellAgentId: agentsTable.retellAgentId, status: agentsTable.status })
+      .from(agentsTable)
+      .where(and(eq(agentsTable.id, selectedAgentId), eq(agentsTable.businessId, businessId)));
+    if (!agent) {
+      const message = "The selected agent does not exist in this workspace.";
+      await db.update(callsTable).set({
+        status: "policy_blocked",
+        outcome: "Blocked — invalid agent",
+        summary: message,
+        errorState: "invalid_agent",
+      }).where(and(eq(callsTable.id, attempt.id), eq(callsTable.businessId, businessId)));
+      return {
+        outcome: "policy_blocked",
+        call: attempt,
+        message,
+        policyReason: "invalid_agent",
+        retryable: false,
+      };
+    }
+    if (agent.status !== "active") {
+      const message = `The selected agent is ${agent.status}; only active agents can place calls.`;
+      await db.update(callsTable).set({
+        status: "policy_blocked",
+        outcome: `Blocked — agent ${agent.status}`,
+        summary: message,
+        errorState: `agent_${agent.status}`,
+      }).where(and(eq(callsTable.id, attempt.id), eq(callsTable.businessId, businessId)));
+      return {
+        outcome: "policy_blocked",
+        call: attempt,
+        message,
+        policyReason: `agent_${agent.status}`,
+        retryable: false,
+      };
+    }
+    if (!agent.retellAgentId) {
+      const message = "The selected agent is not linked to a Retell agent.";
+      await db.update(callsTable).set({
+        status: "policy_blocked",
+        outcome: "Blocked — agent unlinked",
+        summary: message,
+        errorState: "agent_unlinked",
+      }).where(and(eq(callsTable.id, attempt.id), eq(callsTable.businessId, businessId)));
+      return {
+        outcome: "policy_blocked",
+        call: attempt,
+        message,
+        policyReason: "agent_unlinked",
+        retryable: false,
+      };
+    }
+    retellAgentOverride = agent.retellAgentId;
+  } else {
+    const [activeAgent] = await db
+      .select({ id: agentsTable.id, retellAgentId: agentsTable.retellAgentId })
+      .from(agentsTable)
+      .where(and(eq(agentsTable.businessId, businessId), eq(agentsTable.status, "active")))
+      .orderBy(desc(agentsTable.updatedAt))
+      .limit(1);
+    if (activeAgent) {
+      selectedAgentId = activeAgent.id;
+      if (activeAgent.retellAgentId) {
+        retellAgentOverride = activeAgent.retellAgentId;
+      }
+    }
+  }
+
+  let selectedPhoneId = attempt.phoneNumberId ?? null;
+  let fromNumberOverride: string | undefined = undefined;
+
+  if (selectedPhoneId) {
+    const [phone] = await db
+      .select({ id: phoneNumbersTable.id, e164Number: phoneNumbersTable.e164Number, status: phoneNumbersTable.status })
+      .from(phoneNumbersTable)
+      .where(and(eq(phoneNumbersTable.id, selectedPhoneId), eq(phoneNumbersTable.businessId, businessId)));
+    if (!phone) {
+      const message = "The selected phone number does not exist in this workspace.";
+      await db.update(callsTable).set({
+        status: "policy_blocked",
+        outcome: "Blocked — invalid phone number",
+        summary: message,
+        errorState: "invalid_phone_number",
+      }).where(and(eq(callsTable.id, attempt.id), eq(callsTable.businessId, businessId)));
+      return {
+        outcome: "policy_blocked",
+        call: attempt,
+        message,
+        policyReason: "invalid_phone_number",
+        retryable: false,
+      };
+    }
+    if (phone.status !== "active") {
+      const message = "The selected phone number is inactive.";
+      await db.update(callsTable).set({
+        status: "policy_blocked",
+        outcome: "Blocked — phone number inactive",
+        summary: message,
+        errorState: "phone_number_inactive",
+      }).where(and(eq(callsTable.id, attempt.id), eq(callsTable.businessId, businessId)));
+      return {
+        outcome: "policy_blocked",
+        call: attempt,
+        message,
+        policyReason: "phone_number_inactive",
+        retryable: false,
+      };
+    }
+    fromNumberOverride = phone.e164Number;
+  } else if (selectedAgentId) {
+    const [boundPhone] = await db
+      .select({ id: phoneNumbersTable.id, e164Number: phoneNumbersTable.e164Number })
+      .from(phoneNumbersTable)
+      .where(
+        and(
+          eq(phoneNumbersTable.businessId, businessId),
+          eq(phoneNumbersTable.outboundAgentId, selectedAgentId),
+          eq(phoneNumbersTable.status, "active"),
+        ),
+      )
+      .limit(1);
+    if (boundPhone) {
+      selectedPhoneId = boundPhone.id;
+      fromNumberOverride = boundPhone.e164Number;
+    }
+  }
+
   // From here on, a failure is "uncertain", never "didn't happen": Retell
   // may have accepted the call even if we never saw the response.
   try {
@@ -428,11 +575,19 @@ export async function dispatchQueuedCall(input: {
         call_id: attempt.id,
       },
       dynamicVariables,
+      credentials: retellCredentials,
+      agentId: retellAgentOverride,
+      fromNumber: fromNumberOverride,
     });
     const [started] = await db
       .update(callsTable)
       .set({
         providerCallId: live.callId,
+        agentId: selectedAgentId,
+        phoneNumberId: selectedPhoneId,
+        callerNumber: fromNumberOverride ?? null,
+        destinationNumber: contact?.phone ?? null,
+        direction: "outbound",
         outcome: "Live call started with Retell",
         summary:
           "Retell accepted the call and will report the final outcome by webhook.",

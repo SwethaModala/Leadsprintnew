@@ -10,10 +10,11 @@ import express, { type Express } from "express";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
-import { activitiesTable, businessesTable, callsTable, contactsTable, leadsTable } from "@workspace/db/schema";
+import { activitiesTable, businessesTable, callsTable, contactsTable, leadsTable, usersTable } from "@workspace/db/schema";
 import { createTestDb, pilotBusiness, type TestDb } from "../test/testDb";
 import webhooksRouter, { __resetWebhooksDb, __setWebhooksDb } from "./webhooks";
 import { __resetCallQueueDb, __setCallQueueDb } from "../lib/callQueue";
+import { deleteTenantProviderCredential, upsertTenantProviderCredential } from "../lib/security";
 import * as providers from "../lib/providers";
 import * as mailer from "../lib/mailer";
 
@@ -27,7 +28,7 @@ const ENV = {
   RETELL_WEBHOOK_SECRET: "retell_secret",
   CALCOM_API_KEY: "cal_key",
   CALCOM_EVENT_TYPE_ID: "12345",
-  LEAD_INTAKE_WEBHOOK_SECRET: SECRET,
+  APP_ENCRYPTION_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 };
 
 let db: TestDb;
@@ -55,6 +56,7 @@ function intake(body: Record<string, unknown>) {
     .post("/api/webhooks/intake")
     .set("content-type", "application/json")
     .set("x-leadsprint-signature", `sha256=${sig}`)
+    .set("x-webhook-timestamp", new Date().toISOString())
     .send(raw);
 }
 
@@ -88,9 +90,16 @@ beforeEach(async () => {
   vi.setSystemTime(new Date(OPEN));
   db = await createTestDb();
   await db.insert(businessesTable).values(pilotBusiness({ vertical: "home_services", name: "Frostline HVAC" }) as never);
+  await db.insert(usersTable).values({ id: "user_pilot", businessId: BUSINESS_ID, name: "Pilot Operator", email: "pilot@example.com", role: "owner" });
   __setWebhooksDb(db as never);
   __setCallQueueDb(db as never);
   for (const [key, value] of Object.entries(ENV)) process.env[key] = value;
+  await upsertTenantProviderCredential(db as never, {
+    businessId: BUSINESS_ID,
+    userId: "user_pilot",
+    provider: "intake",
+    config: { webhook_secret: SECRET },
+  });
   delete process.env.LEADSPRINT_KILL_SWITCH;
   delete process.env.INTAKE_ALLOW_KEY_AUTH;
   startRetellCall.mockReset();
@@ -140,7 +149,11 @@ describe("key authentication for no-code senders", () => {
 
   it("never authenticates when no intake secret is configured, even with an empty key", async () => {
     process.env.INTAKE_ALLOW_KEY_AUTH = "true";
-    delete process.env.LEAD_INTAKE_WEBHOOK_SECRET;
+    await deleteTenantProviderCredential(db as never, {
+      businessId: BUSINESS_ID,
+      userId: "user_pilot",
+      provider: "intake",
+    });
     expect((await keyed("")).status).toBe(401);
     expect((await keyed("anything")).status).toBe(401);
   });

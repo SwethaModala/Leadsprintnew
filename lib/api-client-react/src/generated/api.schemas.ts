@@ -327,12 +327,32 @@ export interface LeadImportRow {
   timeline?: string;
 }
 
+export type DndStatus = typeof DndStatus[keyof typeof DndStatus];
+
+
+export const DndStatus = {
+  unknown: 'unknown',
+  clear: 'clear',
+  registered: 'registered',
+} as const;
+
+export type ConsentCategory = typeof ConsentCategory[keyof typeof ConsentCategory];
+
+
+export const ConsentCategory = {
+  inquiry: 'inquiry',
+  transactional: 'transactional',
+  promotional: 'promotional',
+} as const;
+
 export interface LeadImportInput {
   rows: LeadImportRow[];
   consent_status?: ConsentStatus;
   /** Where and how consent was captured for this batch. Required when consent_status is "valid". */
   consent_source?: string;
   consent_at?: string;
+  dnd_status?: DndStatus;
+  consent_category?: ConsentCategory;
 }
 
 export interface ImportResult {
@@ -707,6 +727,279 @@ export interface AuditLogEntry {
 
 export interface AuditLogsResponse {
   logs: AuditLogEntry[];
+}
+
+export interface ApiKeySummary {
+  id: string;
+  name: string;
+  key_prefix: string;
+  scopes: string[];
+  /** @nullable */
+  last_used_at: string | null;
+  /** @nullable */
+  expires_at: string | null;
+  /** @nullable */
+  revoked_at: string | null;
+  created_at: string;
+}
+
+export interface ApiKeyListResponse {
+  keys: ApiKeySummary[];
+}
+
+export interface CreateApiKeyRequest {
+  /**
+     * @minLength 2
+     * @maxLength 80
+     */
+  name: string;
+  scopes?: string[];
+  /**
+     * @minimum 1
+     * @maximum 365
+     */
+  expires_in_days?: number;
+}
+
+export interface CreateApiKeyResult {
+  api_key: ApiKeySummary;
+  secret_key: string;
+}
+
+export interface RevokeApiKeyResult {
+  revoked_key_id: string;
+  revoked_at: string;
+}
+
+export type CredentialProvider = typeof CredentialProvider[keyof typeof CredentialProvider];
+
+
+export const CredentialProvider = {
+  retell: 'retell',
+  twilio: 'twilio',
+  calcom: 'calcom',
+  intake: 'intake',
+} as const;
+
+export type ProviderCredentialSummaryMaskedHints = {[key: string]: string};
+
+export interface ProviderCredentialSummary {
+  provider: CredentialProvider;
+  configured: boolean;
+  /** @nullable */
+  key_version: number | null;
+  masked_hints: ProviderCredentialSummaryMaskedHints;
+  /** @nullable */
+  updated_at: string | null;
+}
+
+export interface ProviderCredentialListResponse {
+  encryption_configured: boolean;
+  credentials: ProviderCredentialSummary[];
+}
+
+export type UpsertProviderCredentialsRequestConfig = {[key: string]: string};
+
+export interface UpsertProviderCredentialsRequest {
+  config: UpsertProviderCredentialsRequestConfig;
+}
+
+export interface UpsertProviderCredentialResult {
+  credential: ProviderCredentialSummary;
+}
+
+export interface DeleteProviderCredentialResult {
+  deleted_provider: CredentialProvider;
+}
+
+export type AgentStatus = typeof AgentStatus[keyof typeof AgentStatus];
+
+
+export const AgentStatus = {
+  draft: 'draft',
+  active: 'active',
+  paused: 'paused',
+} as const;
+
+export type AgentUseCase = typeof AgentUseCase[keyof typeof AgentUseCase];
+
+
+export const AgentUseCase = {
+  real_estate: 'real_estate',
+  home_services: 'home_services',
+  insurance: 'insurance',
+  mortgage: 'mortgage',
+  general: 'general',
+} as const;
+
+export interface AgentSummary {
+  id: string;
+  name: string;
+  use_case: AgentUseCase;
+  status: AgentStatus;
+  /** @nullable */
+  voice_id?: string | null;
+  /** @nullable */
+  language?: string | null;
+  /** @nullable */
+  retell_agent_id?: string | null;
+  calls_today: number;
+  created_at: string;
+  /** @nullable */
+  updated_at?: string | null;
+}
+
+export type AgentDetail = AgentSummary & ({
+  /** @nullable */
+  system_prompt?: string | null;
+  /** @nullable */
+  greeting_message?: string | null;
+  /** @nullable */
+  fallback_message?: string | null;
+  /** @nullable */
+  temperature?: number | null;
+  /** @nullable */
+  retell_llm_id?: string | null;
+});
+
+export interface AgentListResponse {
+  agents: AgentSummary[];
+}
+
+export interface AgentDetailResponse {
+  agent: AgentDetail;
+}
+
+export interface CreateAgentRequest {
+  name: string;
+  use_case: AgentUseCase;
+  system_prompt?: string;
+  greeting_message?: string;
+  fallback_message?: string;
+  voice_id?: string;
+  language?: string;
+  temperature?: number;
+  create_retell?: boolean;
+}
+
+export interface UpdateAgentRequest {
+  name?: string;
+  status?: AgentStatus;
+  system_prompt?: string;
+  greeting_message?: string;
+  fallback_message?: string;
+  voice_id?: string;
+  language?: string;
+  temperature?: number;
+}
+
+export interface CreateAgentResult {
+  agent: AgentDetail;
+}
+
+export interface UpdateAgentResult {
+  agent: AgentDetail;
+}
+
+export interface DeleteAgentResult {
+  deleted_id: string;
+}
+
+export interface PublishAgentResult {
+  /** @nullable */
+  version_number?: number | null;
+  published_at: string;
+}
+
+export interface AgentVersionSummary {
+  id: string;
+  version_number: number;
+  published_by: string;
+  published_at: string;
+  /** @nullable */
+  notes?: string | null;
+}
+
+export interface AgentVersionListResponse {
+  versions: AgentVersionSummary[];
+}
+
+export interface RetellRemoteAgent {
+  retell_agent_id: string;
+  agent_name: string;
+  voice_id: string;
+  language: string;
+  last_modification_timestamp: number;
+}
+
+export interface RetellRemoteAgentListResponse {
+  agents: RetellRemoteAgent[];
+}
+
+export interface RetellLinkRequest {
+  retell_agent_id: string;
+  retell_llm_id?: string;
+}
+
+export interface RetellLinkResult {
+  agent: AgentDetail;
+}
+
+export interface RetellVoiceSummary {
+  voice_id: string;
+  voice_name: string;
+  provider: string;
+  /** @nullable */
+  accent?: string | null;
+  /** @nullable */
+  gender?: string | null;
+  /** @nullable */
+  age?: string | null;
+  /** @nullable */
+  preview_audio_url?: string | null;
+}
+
+export interface RetellVoiceListResponse {
+  voices: RetellVoiceSummary[];
+}
+
+export interface WebCallResult {
+  access_token: string;
+  call_id: string;
+}
+
+export interface PhoneNumberSummary {
+  id: string;
+  e164_number: string;
+  /** @nullable */
+  nickname?: string | null;
+  /** @nullable */
+  inbound_agent_id?: string | null;
+  /** @nullable */
+  outbound_agent_id?: string | null;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface PhoneNumberListResponse {
+  phone_numbers: PhoneNumberSummary[];
+}
+
+export interface PhoneNumberSyncResult {
+  synced: number;
+  phone_numbers: PhoneNumberSummary[];
+}
+
+export interface UpdatePhoneNumberRequest {
+  nickname?: string;
+  /** @nullable */
+  inbound_agent_id?: string | null;
+  /** @nullable */
+  outbound_agent_id?: string | null;
+}
+
+export interface UpdatePhoneNumberResult {
+  phone_number: PhoneNumberSummary;
 }
 
 /**

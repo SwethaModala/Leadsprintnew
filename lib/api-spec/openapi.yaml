@@ -24,6 +24,10 @@ tags:
     description: Business configuration
   - name: reports
     description: Weekly reports and usage
+  - name: agents
+    description: AI agent management and Retell sync
+  - name: phone-numbers
+    description: Phone number management and agent binding
 paths:
   /healthz:
     get:
@@ -716,6 +720,410 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /api-keys:
+    get:
+      operationId: listApiKeys
+      tags: [security]
+      summary: List scoped API keys for the active workspace (masked metadata only)
+      responses:
+        "200":
+          description: API keys
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiKeyListResponse"
+        "403":
+          description: Insufficient role permissions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      operationId: createApiKey
+      tags: [security]
+      summary: Create a scoped per-tenant API key (raw secret returned once)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateApiKeyRequest"
+      responses:
+        "201":
+          description: API key created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateApiKeyResult"
+        "400":
+          description: Invalid API key request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Insufficient role permissions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api-keys/{keyId}:
+    delete:
+      operationId: revokeApiKey
+      tags: [security]
+      summary: Revoke a tenant API key
+      parameters:
+        - name: keyId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: API key revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RevokeApiKeyResult"
+        "403":
+          description: Insufficient role permissions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /credentials:
+    get:
+      operationId: listProviderCredentials
+      tags: [security]
+      summary: List encrypted provider credential status and masked hints (never plaintext secrets)
+      responses:
+        "200":
+          description: Provider credential summaries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderCredentialListResponse"
+        "403":
+          description: Insufficient role permissions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /credentials/{provider}:
+    put:
+      operationId: upsertProviderCredentials
+      tags: [security]
+      summary: Encrypt and store per-tenant provider credentials with AES-256-GCM
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/CredentialProvider"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpsertProviderCredentialsRequest"
+      responses:
+        "200":
+          description: Provider credential saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpsertProviderCredentialResult"
+        "400":
+          description: Invalid credential payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Insufficient role permissions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: APP_ENCRYPTION_KEY is not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deleteProviderCredentials
+      tags: [security]
+      summary: Remove stored encrypted credentials for a provider
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/CredentialProvider"
+      responses:
+        "200":
+          description: Provider credential deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteProviderCredentialResult"
+        "403":
+          description: Insufficient role permissions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ---------------------------------------------------------------------------
+  # Agents endpoints
+  # ---------------------------------------------------------------------------
+  /agents:
+    get:
+      operationId: getAgents
+      tags: [agents]
+      summary: List workspace agents
+      responses:
+        "200":
+          description: Agent list
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentListResponse" }
+    post:
+      operationId: postAgents
+      tags: [agents]
+      summary: Create a new agent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateAgentRequest" }
+      responses:
+        "201":
+          description: Agent created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreateAgentResult" }
+        "403":
+          description: Insufficient role permissions
+  /agents/retell/remote:
+    get:
+      operationId: getAgentsRetellRemote
+      tags: [agents]
+      summary: List agents in the connected Retell account
+      responses:
+        "200":
+          description: Remote agent list
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RetellRemoteAgentListResponse" }
+        "503":
+          description: Retell not configured
+  /agents/retell/voices:
+    get:
+      operationId: getAgentsRetellVoices
+      tags: [agents]
+      summary: List available Retell voices
+      responses:
+        "200":
+          description: Voice list
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RetellVoiceListResponse" }
+        "503":
+          description: Retell not configured
+  /agents/{agentId}:
+    parameters:
+      - name: agentId
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: getAgentsAgentId
+      tags: [agents]
+      summary: Get agent detail
+      responses:
+        "200":
+          description: Agent detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentDetailResponse" }
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: patchAgentsAgentId
+      tags: [agents]
+      summary: Update agent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateAgentRequest" }
+      responses:
+        "200":
+          description: Agent updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UpdateAgentResult" }
+        "403":
+          description: Insufficient role permissions
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteAgentsAgentId
+      tags: [agents]
+      summary: Delete agent
+      responses:
+        "200":
+          description: Agent deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeleteAgentResult" }
+        "403":
+          description: Insufficient role permissions
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /agents/{agentId}/publish:
+    parameters:
+      - name: agentId
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: postAgentsAgentIdPublish
+      tags: [agents]
+      summary: Publish agent to Retell and snapshot version
+      responses:
+        "200":
+          description: Published
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublishAgentResult" }
+        "403":
+          description: Insufficient role permissions
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /agents/{agentId}/versions:
+    parameters:
+      - name: agentId
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: getAgentsAgentIdVersions
+      tags: [agents]
+      summary: List published versions of an agent
+      responses:
+        "200":
+          description: Version list
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentVersionListResponse" }
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /agents/{agentId}/retell-link:
+    parameters:
+      - name: agentId
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: postAgentsAgentIdRetellLink
+      tags: [agents]
+      summary: Link an existing Retell agent to this workspace agent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RetellLinkRequest" }
+      responses:
+        "200":
+          description: Linked
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RetellLinkResult" }
+        "403":
+          description: Insufficient role permissions
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /agents/{agentId}/test-web-call:
+    parameters:
+      - name: agentId
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: postAgentsAgentIdTestWebCall
+      tags: [agents]
+      summary: Create a Retell web-call sandbox test
+      responses:
+        "200":
+          description: Web-call created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WebCallResult" }
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          description: Retell not configured
+
+  # ---------------------------------------------------------------------------
+  # Phone numbers endpoints
+  # ---------------------------------------------------------------------------
+  /phone-numbers:
+    get:
+      operationId: getPhoneNumbers
+      tags: [phone-numbers]
+      summary: List workspace phone numbers
+      responses:
+        "200":
+          description: Phone number list
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PhoneNumberListResponse" }
+  /phone-numbers/sync:
+    post:
+      operationId: postPhoneNumbersSync
+      tags: [phone-numbers]
+      summary: Sync phone numbers from Retell into this workspace
+      responses:
+        "200":
+          description: Synced
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PhoneNumberSyncResult" }
+        "503":
+          description: Retell not configured
+  /phone-numbers/{phoneNumberId}:
+    parameters:
+      - name: phoneNumberId
+        in: path
+        required: true
+        schema: { type: string }
+    patch:
+      operationId: patchPhoneNumbersPhoneNumberId
+      tags: [phone-numbers]
+      summary: Update phone number nickname or agent binding
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdatePhoneNumberRequest" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UpdatePhoneNumberResult" }
+        "403":
+          description: Insufficient role permissions
+        "404":
+          $ref: "#/components/responses/NotFound"
+
 components:
   parameters:
     Id:
@@ -929,6 +1337,8 @@ components:
           type: string
           description: Where and how consent was captured for this batch. Required when consent_status is "valid".
         consent_at: { type: string, format: date-time }
+        dnd_status: { $ref: "#/components/schemas/DndStatus" }
+        consent_category: { $ref: "#/components/schemas/ConsentCategory" }
       required: [rows]
     LeadImportRow:
       type: object
@@ -1258,5 +1668,287 @@ components:
           type: array
           items: { $ref: "#/components/schemas/AuditLogEntry" }
       required: [logs]
+    DndStatus:
+      type: string
+      enum: [unknown, clear, registered]
+    ConsentCategory:
+      type: string
+      enum: [inquiry, transactional, promotional]
+    ApiKeySummary:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        key_prefix: { type: string }
+        scopes:
+          type: array
+          items: { type: string }
+        last_used_at: { type: ["string", "null"], format: date-time }
+        expires_at: { type: ["string", "null"], format: date-time }
+        revoked_at: { type: ["string", "null"], format: date-time }
+        created_at: { type: string, format: date-time }
+      required: [id, name, key_prefix, scopes, last_used_at, expires_at, revoked_at, created_at]
+    ApiKeyListResponse:
+      type: object
+      properties:
+        keys:
+          type: array
+          items: { $ref: "#/components/schemas/ApiKeySummary" }
+      required: [keys]
+    CreateApiKeyRequest:
+      type: object
+      properties:
+        name: { type: string, minLength: 2, maxLength: 80 }
+        scopes:
+          type: array
+          items: { type: string }
+        expires_in_days: { type: number, minimum: 1, maximum: 365 }
+      required: [name]
+    CreateApiKeyResult:
+      type: object
+      properties:
+        api_key: { $ref: "#/components/schemas/ApiKeySummary" }
+        secret_key: { type: string }
+      required: [api_key, secret_key]
+    RevokeApiKeyResult:
+      type: object
+      properties:
+        revoked_key_id: { type: string }
+        revoked_at: { type: string, format: date-time }
+      required: [revoked_key_id, revoked_at]
+    CredentialProvider:
+      type: string
+      enum: [retell, twilio, calcom, intake]
+    ProviderCredentialSummary:
+      type: object
+      properties:
+        provider: { $ref: "#/components/schemas/CredentialProvider" }
+        configured: { type: boolean }
+        key_version: { type: ["number", "null"] }
+        masked_hints:
+          type: object
+          additionalProperties: { type: string }
+        updated_at: { type: ["string", "null"], format: date-time }
+      required: [provider, configured, key_version, masked_hints, updated_at]
+    ProviderCredentialListResponse:
+      type: object
+      properties:
+        encryption_configured: { type: boolean }
+        credentials:
+          type: array
+          items: { $ref: "#/components/schemas/ProviderCredentialSummary" }
+      required: [encryption_configured, credentials]
+    UpsertProviderCredentialsRequest:
+      type: object
+      properties:
+        config:
+          type: object
+          additionalProperties: { type: string }
+      required: [config]
+    UpsertProviderCredentialResult:
+      type: object
+      properties:
+        credential: { $ref: "#/components/schemas/ProviderCredentialSummary" }
+      required: [credential]
+    DeleteProviderCredentialResult:
+      type: object
+      properties:
+        deleted_provider: { $ref: "#/components/schemas/CredentialProvider" }
+      required: [deleted_provider]
+
+    # -------------------------------------------------------------------------
+    # Phase 3 — Agents & Phone Numbers
+    # -------------------------------------------------------------------------
+    AgentStatus:
+      type: string
+      enum: [draft, active, paused]
+    AgentUseCase:
+      type: string
+      enum: [real_estate, home_services, insurance, mortgage, general]
+    AgentSummary:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        use_case: { $ref: "#/components/schemas/AgentUseCase" }
+        status: { $ref: "#/components/schemas/AgentStatus" }
+        voice_id: { type: [string, "null"] }
+        language: { type: [string, "null"] }
+        retell_agent_id: { type: [string, "null"] }
+        calls_today: { type: number }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: [string, "null"], format: date-time }
+      required: [id, name, use_case, status, calls_today, created_at]
+    AgentDetail:
+      allOf:
+        - $ref: "#/components/schemas/AgentSummary"
+        - type: object
+          properties:
+            system_prompt: { type: [string, "null"] }
+            greeting_message: { type: [string, "null"] }
+            fallback_message: { type: [string, "null"] }
+            temperature: { type: [number, "null"] }
+            retell_llm_id: { type: [string, "null"] }
+    AgentListResponse:
+      type: object
+      properties:
+        agents:
+          type: array
+          items: { $ref: "#/components/schemas/AgentSummary" }
+      required: [agents]
+    AgentDetailResponse:
+      type: object
+      properties:
+        agent: { $ref: "#/components/schemas/AgentDetail" }
+      required: [agent]
+    CreateAgentRequest:
+      type: object
+      properties:
+        name: { type: string }
+        use_case: { $ref: "#/components/schemas/AgentUseCase" }
+        system_prompt: { type: string }
+        greeting_message: { type: string }
+        fallback_message: { type: string }
+        voice_id: { type: string }
+        language: { type: string }
+        temperature: { type: number }
+        create_retell: { type: boolean, default: false }
+      required: [name, use_case]
+    UpdateAgentRequest:
+      type: object
+      properties:
+        name: { type: string }
+        status: { $ref: "#/components/schemas/AgentStatus" }
+        system_prompt: { type: string }
+        greeting_message: { type: string }
+        fallback_message: { type: string }
+        voice_id: { type: string }
+        language: { type: string }
+        temperature: { type: number }
+    CreateAgentResult:
+      type: object
+      properties:
+        agent: { $ref: "#/components/schemas/AgentDetail" }
+      required: [agent]
+    UpdateAgentResult:
+      type: object
+      properties:
+        agent: { $ref: "#/components/schemas/AgentDetail" }
+      required: [agent]
+    DeleteAgentResult:
+      type: object
+      properties:
+        deleted_id: { type: string }
+      required: [deleted_id]
+    PublishAgentResult:
+      type: object
+      properties:
+        version_number: { type: [number, "null"] }
+        published_at: { type: string, format: date-time }
+      required: [published_at]
+    AgentVersionSummary:
+      type: object
+      properties:
+        id: { type: string }
+        version_number: { type: number }
+        published_by: { type: string }
+        published_at: { type: string, format: date-time }
+        notes: { type: [string, "null"] }
+      required: [id, version_number, published_by, published_at]
+    AgentVersionListResponse:
+      type: object
+      properties:
+        versions:
+          type: array
+          items: { $ref: "#/components/schemas/AgentVersionSummary" }
+      required: [versions]
+    RetellRemoteAgent:
+      type: object
+      properties:
+        retell_agent_id: { type: string }
+        agent_name: { type: string }
+        voice_id: { type: string }
+        language: { type: string }
+        last_modification_timestamp: { type: number }
+      required: [retell_agent_id, agent_name, voice_id, language, last_modification_timestamp]
+    RetellRemoteAgentListResponse:
+      type: object
+      properties:
+        agents:
+          type: array
+          items: { $ref: "#/components/schemas/RetellRemoteAgent" }
+      required: [agents]
+    RetellLinkRequest:
+      type: object
+      properties:
+        retell_agent_id: { type: string }
+        retell_llm_id: { type: string }
+      required: [retell_agent_id]
+    RetellLinkResult:
+      type: object
+      properties:
+        agent: { $ref: "#/components/schemas/AgentDetail" }
+      required: [agent]
+    RetellVoiceSummary:
+      type: object
+      properties:
+        voice_id: { type: string }
+        voice_name: { type: string }
+        provider: { type: string }
+        accent: { type: [string, "null"] }
+        gender: { type: [string, "null"] }
+        age: { type: [string, "null"] }
+        preview_audio_url: { type: [string, "null"] }
+      required: [voice_id, voice_name, provider]
+    RetellVoiceListResponse:
+      type: object
+      properties:
+        voices:
+          type: array
+          items: { $ref: "#/components/schemas/RetellVoiceSummary" }
+      required: [voices]
+    WebCallResult:
+      type: object
+      properties:
+        access_token: { type: string }
+        call_id: { type: string }
+      required: [access_token, call_id]
+    PhoneNumberSummary:
+      type: object
+      properties:
+        id: { type: string }
+        e164_number: { type: string }
+        nickname: { type: [string, "null"] }
+        inbound_agent_id: { type: [string, "null"] }
+        outbound_agent_id: { type: [string, "null"] }
+        is_active: { type: boolean }
+        created_at: { type: string, format: date-time }
+      required: [id, e164_number, is_active, created_at]
+    PhoneNumberListResponse:
+      type: object
+      properties:
+        phone_numbers:
+          type: array
+          items: { $ref: "#/components/schemas/PhoneNumberSummary" }
+      required: [phone_numbers]
+    PhoneNumberSyncResult:
+      type: object
+      properties:
+        synced: { type: number }
+        phone_numbers:
+          type: array
+          items: { $ref: "#/components/schemas/PhoneNumberSummary" }
+      required: [synced, phone_numbers]
+    UpdatePhoneNumberRequest:
+      type: object
+      properties:
+        nickname: { type: string }
+        inbound_agent_id: { type: [string, "null"] }
+        outbound_agent_id: { type: [string, "null"] }
+    UpdatePhoneNumberResult:
+      type: object
+      properties:
+        phone_number: { $ref: "#/components/schemas/PhoneNumberSummary" }
+      required: [phone_number]
 
 

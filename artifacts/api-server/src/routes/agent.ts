@@ -67,9 +67,9 @@ function id(prefix: string): string {
 // including all the operator-console routes mounted after it — so the
 // whole console API answered "Invalid Retell signature". The path prefix
 // is what keeps Retell's auth on Retell's endpoints.
-router.use("/agent", (req, res, next) => {
+router.use("/agent", async (req, res, next) => {
   try {
-    (req as Request & { agentTool?: ReturnType<typeof parseAgentToolRequest> }).agentTool = parseAgentToolRequest(req, rawBody(req));
+    (req as Request & { agentTool?: Awaited<ReturnType<typeof parseAgentToolRequest>> }).agentTool = await parseAgentToolRequest(req, rawBody(req), db);
     next();
   } catch (error) {
     if (error instanceof AgentAuthError) {
@@ -81,7 +81,7 @@ router.use("/agent", (req, res, next) => {
 });
 
 function toolContext(req: Request) {
-  return (req as Request & { agentTool: ReturnType<typeof parseAgentToolRequest> }).agentTool;
+  return (req as Request & { agentTool: Awaited<ReturnType<typeof parseAgentToolRequest>> }).agentTool;
 }
 
 router.post("/agent/availability", async (req, res): Promise<void> => {

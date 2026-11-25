@@ -9,7 +9,6 @@ import {
   Plus,
   RefreshCw,
   Search,
-  Volume2,
 } from 'lucide-react';
 import {
   Badge,
@@ -24,327 +23,266 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/common';
+import {
+  useGetAgents,
+  usePostAgents,
+  usePatchAgentsAgentId,
+  useDeleteAgentsAgentId,
+  usePostPhoneNumbersSync,
+  useGetPhoneNumbers,
+} from '@workspace/api-client-react';
 
-interface RetellAgentItem {
-  name: string;
-  id: string;
-  channel: string;
-  mapping: string;
+function statusColorClass(status: string) {
+  switch (status) {
+    case 'active': return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+    case 'paused': return 'bg-amber-50 text-amber-700 border-amber-200';
+    default: return 'bg-slate-50 text-slate-700 border-slate-200';
+  }
 }
-
-interface LocalAgentItem {
-  id: string;
-  name: string;
-  businessType: string;
-  languages: string[];
-  voice: string;
-  voiceProvider: string;
-  status: 'active' | 'paused' | 'draft';
-  callsToday: number;
-  createdDate: string;
-}
-
-const INITIAL_RETELL_AGENTS: RetellAgentItem[] = [
-  {
-    name: 'Boomi Solutions Receptionist',
-    id: 'agent_49f28308f661ae06a348071fff',
-    channel: 'voice',
-    mapping: 'Linked to sara (cmvdp8ql00001te0k4o5q8f6d)',
-  },
-  {
-    name: 'Real Estate Qualifier US',
-    id: 'agent_72a19904e220bc01a98092aaa',
-    channel: 'voice',
-    mapping: 'Linked to alex (cmvdp8ql00002te0k4o5q8f6e)',
-  },
-];
-
-const INITIAL_LOCAL_AGENTS: LocalAgentItem[] = [
-  {
-    id: 'cmvdp8ql00001te0k4o5q8f6d',
-    name: 'sara',
-    businessType: 'Sales Agent',
-    languages: ['English'],
-    voice: 'Aura-Asteria',
-    voiceProvider: 'Deepgram (1x)',
-    status: 'active',
-    callsToday: 1,
-    createdDate: '2026-10-18',
-  },
-  {
-    id: 'cmvdp8ql00002te0k4o5q8f6e',
-    name: 'alex',
-    businessType: 'Inbound Receptionist',
-    languages: ['English', 'Spanish'],
-    voice: 'Rachel - Natural Conversational',
-    voiceProvider: 'ElevenLabs (Turbo v2)',
-    status: 'active',
-    callsToday: 3,
-    createdDate: '2026-10-20',
-  },
-  {
-    id: 'cmvdp8ql00003te0k4o5q8f6f',
-    name: 'maya-concierge',
-    businessType: 'Showing Scheduler',
-    languages: ['English'],
-    voice: 'Aura-Orion',
-    voiceProvider: 'Deepgram (1x)',
-    status: 'paused',
-    callsToday: 0,
-    createdDate: '2026-10-22',
-  },
-];
 
 export default function AgentsPage() {
   const [search, setSearch] = useState('');
-  const [selectedLanguage, setSelectedLanguage] = useState('all');
   const [selectedStatus, setSelectedStatus] = useState('all');
-  const [localAgents, setLocalAgents] = useState<LocalAgentItem[]>(INITIAL_LOCAL_AGENTS);
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  const handleRefresh = () => {
-    setIsRefreshing(true);
-    setTimeout(() => setIsRefreshing(false), 800);
-  };
+  const { data: agentsData, isLoading, refetch } = useGetAgents();
+  const { data: phoneData, refetch: refetchPhones } = useGetPhoneNumbers();
+  const patchAgent = usePatchAgentsAgentId();
+  const deleteAgent = useDeleteAgentsAgentId();
+  const syncPhones = usePostPhoneNumbersSync();
+  const createAgent = usePostAgents();
 
-  const handleToggleStatus = (id: string) => {
-    setLocalAgents((prev) =>
-      prev.map((agent) =>
-        agent.id === id
-          ? { ...agent, status: agent.status === 'active' ? 'paused' : 'active' }
-          : agent,
-      ),
+  const agents = agentsData?.agents ?? [];
+  const phoneNumbers = phoneData?.phone_numbers ?? [];
+
+  const filtered = agents.filter((a) => {
+    const matchesSearch =
+      !search ||
+      a.name.toLowerCase().includes(search.toLowerCase()) ||
+      (a.retell_agent_id ?? '').toLowerCase().includes(search.toLowerCase());
+    const matchesStatus = selectedStatus === 'all' || a.status === selectedStatus;
+    return matchesSearch && matchesStatus;
+  });
+
+  const handleToggleStatus = (id: string, currentStatus: string) => {
+    const newStatus = currentStatus === 'active' ? 'paused' : 'active';
+    patchAgent.mutate(
+      { agentId: id, data: { status: newStatus as 'active' | 'paused' } },
+      { onSuccess: () => refetch() },
     );
   };
 
-  const handleCopy = (id: string) => {
-    navigator.clipboard.writeText(id);
-    setCopiedId(id);
-    setTimeout(() => setCopiedId(null), 2000);
+  const handleDelete = (id: string) => {
+    if (!window.confirm('Delete this agent? This cannot be undone.')) return;
+    deleteAgent.mutate(
+      { agentId: id },
+      { onSuccess: () => refetch() },
+    );
   };
 
-  const filteredAgents = localAgents.filter((agent) => {
-    const matchesSearch =
-      agent.name.toLowerCase().includes(search.toLowerCase()) ||
-      agent.businessType.toLowerCase().includes(search.toLowerCase()) ||
-      agent.voice.toLowerCase().includes(search.toLowerCase()) ||
-      agent.id.toLowerCase().includes(search.toLowerCase());
-    const matchesLang = selectedLanguage === 'all' || agent.languages.includes(selectedLanguage);
-    const matchesStatus = selectedStatus === 'all' || agent.status === selectedStatus;
-    return matchesSearch && matchesLang && matchesStatus;
-  });
+  const handleCopyId = (id: string) => {
+    navigator.clipboard.writeText(id);
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(null), 1500);
+  };
+
+  const handleSync = () => {
+    syncPhones.mutate(undefined, { onSuccess: () => refetchPhones() });
+  };
 
   return (
     <div className="animate-rise-in space-y-6">
       <PageHeader
-        eyebrow="Console"
+        eyebrow="Console / AI agents"
         title="AI Agents"
-        description="Configure, duplicate, pause, or deploy conversational agents across standard business profiles."
+        description="Manage LeadSprint AI agents and their Retell voice configurations."
         action={
-          <Link
-            href="/workspace/agent-builder"
-            className="inline-flex items-center gap-2 rounded-md bg-[hsl(var(--primary))] px-3.5 py-2 text-sm font-bold text-[hsl(var(--primary-foreground))] hover:bg-[hsl(var(--primary))/90]"
-            data-testid="button-open-builder"
-          >
-            <Plus size={15} />
-            Agent builder
-          </Link>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleSync}
+              disabled={syncPhones.isPending}
+              data-testid="button-sync-phones"
+            >
+              <RefreshCw size={14} className={syncPhones.isPending ? 'animate-spin' : ''} />
+              Sync phones
+            </Button>
+            <Link href="/workspace/agent-builder">
+              <Button size="sm" data-testid="button-create-agent">
+                <Plus size={14} />
+                New agent
+              </Button>
+            </Link>
+          </div>
         }
       />
 
+      {/* Filters */}
       <Section>
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h3 className="font-bold text-[hsl(var(--foreground))]">Existing Retell AI Agents</h3>
-            <p className="mt-0.5 text-xs text-[hsl(var(--muted-foreground))]">
-              Read-only list from the configured Retell account. Linking changes only the local application mapping and requires an organization owner or administrator.
-            </p>
-          </div>
-          <Button
-            onClick={handleRefresh}
-            data-testid="button-refresh-retell"
-            className="px-3 py-2 text-sm"
-          >
-            {isRefreshing ? <RefreshCw size={13} className="animate-spin" /> : <RefreshCw size={13} />}
-            <span>Refresh</span>
-          </Button>
-        </div>
-
-        <div className="mt-4">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-[30%]">Retell agent</TableHead>
-                <TableHead className="w-[30%]">Retell agent ID</TableHead>
-                <TableHead className="w-[15%]">Channel</TableHead>
-                <TableHead>Application mapping</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {INITIAL_RETELL_AGENTS.map((item) => (
-                <TableRow key={item.id}>
-                  <TableCell className="w-[30%]">
-                    <p className="font-semibold text-[hsl(var(--foreground))]">{item.name}</p>
-                  </TableCell>
-                  <TableCell className="w-[30%]">
-                    <p className="font-mono text-xs text-[hsl(var(--muted-foreground))]">{item.id}</p>
-                  </TableCell>
-                  <TableCell className="w-[15%]">
-                    <span className="inline-flex items-center gap-1.5 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--muted))/0.4] px-2.5 py-1 text-xs text-[hsl(var(--muted-foreground))]">
-                      <Volume2 size={12} />
-                      {item.channel}
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    <p className="text-xs font-medium text-[hsl(var(--muted-foreground))]">{item.mapping}</p>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
-      </Section>
-
-      <Section
-        title="Configured application agents"
-        description="Agents active in this tenant workspace for handling inbound leads and scheduled outbound qualification calls."
-      >
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <div className="relative flex-1">
-            <Search size={16} className="absolute left-3.5 top-[50%] -translate-y-[50%] text-[hsl(var(--muted-foreground))]" />
+        <div className="flex flex-wrap items-center gap-3 p-4">
+          <div className="relative flex-1 min-w-48">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[hsl(var(--muted-foreground))]" />
             <input
-              type="text"
+              className="w-full rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--background))] pl-9 pr-3 py-2 text-sm"
+              placeholder="Search agents…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search agents by name, type, or voice…"
-              className="w-full rounded-md border border-[hsl(var(--input))] bg-[hsl(var(--background))] pl-10 pr-4 py-2.5 text-sm text-[hsl(var(--foreground))] placeholder-[hsl(var(--muted-foreground))] outline-none focus:border-[hsl(var(--primary))] focus:ring-1 focus:ring-[hsl(var(--primary))]"
               data-testid="input-search-agents"
             />
           </div>
           <div className="flex items-center gap-2">
-            <Select
-              value={selectedLanguage}
-              onChange={(e) => setSelectedLanguage(e.target.value)}
-              data-testid="select-language"
-            >
-              <option value="all">All languages</option>
-              <option value="English">English</option>
-              <option value="Spanish">Spanish</option>
-            </Select>
+            <Filter size={14} className="text-[hsl(var(--muted-foreground))]" />
             <Select
               value={selectedStatus}
               onChange={(e) => setSelectedStatus(e.target.value)}
-              data-testid="select-status"
+              data-testid="select-filter-status"
             >
               <option value="all">All statuses</option>
               <option value="active">Active</option>
               <option value="paused">Paused</option>
+              <option value="draft">Draft</option>
             </Select>
           </div>
         </div>
 
-        <div className="mt-4">
+        {/* Agents table */}
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Name</TableHead>
+              <TableHead>Use case</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Voice</TableHead>
+              <TableHead>Retell ID</TableHead>
+              <TableHead>Calls today</TableHead>
+              <TableHead>Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {isLoading && (
+              <TableRow>
+                <TableCell colSpan={7} className="text-center text-sm text-[hsl(var(--muted-foreground))] py-8">
+                  Loading…
+                </TableCell>
+              </TableRow>
+            )}
+            {!isLoading && filtered.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={7} className="text-center text-sm text-[hsl(var(--muted-foreground))] py-8">
+                  <Bot size={32} className="mx-auto mb-2 opacity-30" />
+                  No agents yet. Create your first agent to get started.
+                </TableCell>
+              </TableRow>
+            )}
+            {filtered.map((agent) => (
+              <TableRow key={agent.id} data-testid={`row-agent-${agent.id}`}>
+                <TableCell className="font-medium">
+                  <Link href={`/workspace/agent-builder?id=${agent.id}`} className="hover:underline">
+                    {agent.name}
+                  </Link>
+                </TableCell>
+                <TableCell className="text-sm capitalize">{(agent.use_case ?? '').replace('_', ' ')}</TableCell>
+                <TableCell>
+                  <Badge className={statusColorClass(agent.status ?? 'draft')}>
+                    {agent.status ?? 'draft'}
+                  </Badge>
+                </TableCell>
+                <TableCell className="text-sm text-[hsl(var(--muted-foreground))]">
+                  {agent.voice_id ?? '—'}
+                </TableCell>
+                <TableCell>
+                  {agent.retell_agent_id ? (
+                    <div className="flex items-center gap-1.5">
+                      <code className="text-xs">{agent.retell_agent_id.slice(0, 20)}…</code>
+                      <button
+                        onClick={() => handleCopyId(agent.retell_agent_id!)}
+                        className="text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]"
+                        data-testid={`button-copy-${agent.id}`}
+                      >
+                        <Copy size={12} />
+                      </button>
+                      {copiedId === agent.retell_agent_id && (
+                        <span className="text-xs text-[hsl(var(--primary))]">Copied</span>
+                      )}
+                    </div>
+                  ) : (
+                    <span className="text-xs text-[hsl(var(--muted-foreground))]">Not linked</span>
+                  )}
+                </TableCell>
+                <TableCell className="tabular-nums">{agent.calls_today}</TableCell>
+                <TableCell>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleToggleStatus(agent.id, agent.status ?? 'draft')}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-[hsl(var(--border))] px-2 py-1 text-xs hover:bg-[hsl(var(--muted))]"
+                      disabled={patchAgent.isPending}
+                      data-testid={`button-toggle-${agent.id}`}
+                    >
+                      {agent.status === 'active' ? <Pause size={12} /> : <Play size={12} />}
+                      {agent.status === 'active' ? 'Pause' : 'Activate'}
+                    </button>
+                    <button
+                      onClick={() => handleDelete(agent.id)}
+                      className="inline-flex items-center rounded-md border border-[hsl(var(--destructive)/0.3)] px-2 py-1 text-xs text-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive)/0.07)]"
+                      disabled={deleteAgent.isPending}
+                      data-testid={`button-delete-${agent.id}`}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </Section>
+
+      {/* Phone numbers */}
+      {phoneNumbers.length > 0 && (
+        <Section>
+          <div className="p-4 pb-2">
+            <h3 className="text-sm font-semibold">Phone Numbers</h3>
+            <p className="text-xs text-[hsl(var(--muted-foreground))]">Synced from your Retell account</p>
+          </div>
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-[26%]">Agent</TableHead>
-                <TableHead className="w-[18%]">Business type</TableHead>
-                <TableHead className="w-[14%]">Languages</TableHead>
-                <TableHead className="w-[20%]">Voice configuration</TableHead>
-                <TableHead className="w-[10%]">Status</TableHead>
-                <TableHead className="w-[10%] text-right">Calls today</TableHead>
-                <TableHead className="w-[14%] text-right">Created</TableHead>
-                <TableHead className="w-[16%] text-right">Actions</TableHead>
+                <TableHead>Number</TableHead>
+                <TableHead>Nickname</TableHead>
+                <TableHead>Inbound agent</TableHead>
+                <TableHead>Outbound agent</TableHead>
+                <TableHead>Status</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredAgents.map((agent) => (
-                <TableRow key={agent.id} data-testid={`row-agent-${agent.name}`}>
-                  <TableCell className="w-[26%]">
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-[hsl(var(--primary))/0.10] text-[hsl(var(--primary))]">
-                        <Bot size={16} />
-                      </div>
-                      <div>
-                        <p className="font-semibold text-[hsl(var(--foreground))]">{agent.name}</p>
-                        <div className="flex items-center gap-1.5 text-[11px] font-mono text-[hsl(var(--muted-foreground))]">
-                          <span>ID: {agent.id.slice(0, 16)}…</span>
-                          <button
-                            onClick={() => handleCopy(agent.id)}
-                            title="Copy agent ID"
-                            className="text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]"
-                          >
-                            <Copy size={11} />
-                          </button>
-                        </div>
-                      </div>
-                    </div>
+              {phoneNumbers.map((pn) => (
+                <TableRow key={pn.id} data-testid={`row-phone-${pn.id}`}>
+                  <TableCell className="font-mono text-sm">{pn.e164_number}</TableCell>
+                  <TableCell className="text-sm">{pn.nickname ?? '—'}</TableCell>
+                  <TableCell className="text-xs text-[hsl(var(--muted-foreground))]">
+                    {pn.inbound_agent_id ?? '—'}
                   </TableCell>
-                  <TableCell className="w-[18%]">
-                    <p className="text-sm text-[hsl(var(--muted-foreground))] font-medium">{agent.businessType}</p>
+                  <TableCell className="text-xs text-[hsl(var(--muted-foreground))]">
+                    {pn.outbound_agent_id ?? '—'}
                   </TableCell>
-                  <TableCell className="w-[14%]">
-                    <div className="flex flex-wrap gap-1">
-                      {agent.languages.map((lang) => (
-                        <span key={lang} className="rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--muted))/0.4] px-2 py-0.5 text-[10px] text-[hsl(var(--muted-foreground))]">
-                          {lang}
-                        </span>
-                      ))}
-                    </div>
-                  </TableCell>
-                  <TableCell className="w-[20%]">
-                    <p className="font-medium text-[hsl(var(--foreground))]">{agent.voice}</p>
-                    <p className="mt-0.5 text-[11px] text-[hsl(var(--muted-foreground))]">{agent.voiceProvider}</p>
-                  </TableCell>
-                  <TableCell className="w-[10%]">
-                    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold border ${agent.status === 'active' ? 'border-[#8fc7a8]/55 bg-[#eff7f2] text-[#2f6b49]' : 'border-[#e2e8f0]/55 bg-[#f8fafc] text-[#475569]'}`}>
-                      <span
-                        className={`h-1.5 w-1.5 rounded-full ${
-                          agent.status === 'active'
-                            ? 'bg-[hsl(var(--success))]'
-                            : 'bg-[hsl(var(--muted-foreground))]'
-                        }`}
-                      />
-                      {agent.status === 'active' ? 'Active' : 'Paused'}
-                    </span>
-                  </TableCell>
-                  <TableCell className="w-[10%] text-right">
-                    <p className="font-mono text-xs font-semibold text-[hsl(var(--foreground))]">{agent.callsToday}</p>
-                  </TableCell>
-                  <TableCell className="w-[14%] text-right">
-                    <p className="text-[11px] font-mono text-[hsl(var(--muted-foreground))]">{agent.createdDate}</p>
-                  </TableCell>
-                  <TableCell className="w-[16%] text-right">
-                    <div className="flex items-center justify-end gap-1.5">
-                      <Link
-                        href={`/workspace/agent-builder?id=${agent.id}`}
-                        className="rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-2.5 py-1 text-xs font-medium text-[hsl(var(--foreground))] hover:bg-[hsl(var(--muted))]"
-                        data-testid={`button-edit-agent-${agent.name}`}
-                      >
-                        Edit
-                      </Link>
-                      <button
-                        onClick={() => handleToggleStatus(agent.id)}
-                        className="rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-2.5 py-1 text-xs font-medium text-[hsl(var(--foreground))] hover:bg-[hsl(var(--muted))]"
-                        data-testid={`button-toggle-agent-${agent.name}`}
-                      >
-                        {agent.status === 'active' ? 'Pause' : 'Resume'}
-                      </button>
-                      <button
-                        onClick={() => handleCopy(agent.id)}
-                        className="rounded-md p-1.5 text-[hsl(var(--muted-foreground))] hover:bg-[hsl(var(--muted))] hover:text-[hsl(var(--foreground))]" title="Copy config"
-                      >
-                        <Copy size={13} />
-                      </button>
-                    </div>
+                  <TableCell>
+                    <Badge className={pn.is_active ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-50 text-slate-700 border-slate-200'}>
+                      {pn.is_active ? 'active' : 'inactive'}
+                    </Badge>
                   </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
-        </div>
-      </Section>
+        </Section>
+      )}
+
+      {createAgent.isError && (
+        <p className="text-sm text-[hsl(var(--destructive))]" data-testid="error-create-agent">
+          Failed to create agent. Please try again.
+        </p>
+      )}
     </div>
   );
 }

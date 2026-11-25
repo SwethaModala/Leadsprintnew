@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import express, { type Express } from "express";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { businessesTable } from "@workspace/db/schema";
+import { businessesTable, usersTable } from "@workspace/db/schema";
 import { createTestDb, pilotBusiness, type TestDb } from "../test/testDb";
 import webhooksRouter, {
   isTimestampFresh,
@@ -10,15 +10,17 @@ import webhooksRouter, {
   __setWebhooksDb,
 } from "./webhooks";
 import { __resetCallQueueDb, __setCallQueueDb } from "../lib/callQueue";
+import { upsertTenantProviderCredential } from "../lib/security";
 
 const INTAKE_SECRET = "test_intake_webhook_secret";
 const CALCOM_SECRET = "test_calcom_webhook_secret";
 const BUSINESS_ID = "business_pilot";
+const ENC_KEY = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 let db: TestDb;
 
 const ENV = {
-  LEAD_INTAKE_WEBHOOK_SECRET: INTAKE_SECRET,
+  APP_ENCRYPTION_KEY: ENC_KEY,
   CALCOM_WEBHOOK_SECRET: CALCOM_SECRET,
 };
 
@@ -86,6 +88,13 @@ describe("Webhook freshness & replay defense HTTP endpoints", () => {
       process.env[key] = value;
     }
     await db.insert(businessesTable).values(pilotBusiness() as never);
+    await db.insert(usersTable).values({ id: "user_pilot", businessId: BUSINESS_ID, name: "Pilot Operator", email: "pilot@example.com", role: "owner" });
+    await upsertTenantProviderCredential(db as never, {
+      businessId: BUSINESS_ID,
+      userId: "user_pilot",
+      provider: "intake",
+      config: { webhook_secret: INTAKE_SECRET },
+    });
   });
 
   afterEach(() => {

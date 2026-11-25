@@ -1,4 +1,30 @@
 import crypto from "node:crypto";
+import { isEncryptionConfigured } from "./crypto";
+
+export interface RetellCredentialOverride {
+  api_key?: string;
+  agent_id?: string;
+  from_number?: string;
+  from_number_us?: string;
+  from_number_in?: string;
+  webhook_secret?: string;
+  api_url?: string;
+}
+
+export interface TwilioCredentialOverride {
+  account_sid?: string;
+  auth_token?: string;
+  us_from_number?: string;
+  india_from_number?: string;
+  webhook_secret?: string;
+}
+
+export interface CalcomCredentialOverride {
+  api_key?: string;
+  event_type_id?: string;
+  webhook_secret?: string;
+  api_url?: string;
+}
 
 export class ProviderNotConfiguredError extends Error {
   readonly code = "PROVIDER_NOT_CONFIGURED";
@@ -55,7 +81,6 @@ export function providerConfig() {
     retell,
     twilio,
     calcom,
-    intakeWebhookSecret: env("LEAD_INTAKE_WEBHOOK_SECRET"),
   };
 }
 
@@ -100,18 +125,26 @@ export async function startRetellCall(input: {
   metadata: Record<string, string>;
   /** Fills the {{placeholders}} in the agent prompt for this call. */
   dynamicVariables?: Record<string, string>;
+  credentials?: RetellCredentialOverride | null;
+  agentId?: string;
+  fromNumber?: string;
 }): Promise<{ callId: string }> {
-  const config = providerConfig().retell;
+  const base = providerConfig().retell;
+  const cred = input.credentials ?? undefined;
+  const apiKey = cred !== undefined ? cred.api_key : base.apiKey;
+  const agentId = input.agentId ?? (cred !== undefined ? cred.agent_id : base.agentId);
+  const apiUrl = cred?.api_url ?? base.apiUrl;
   const fromNumber =
-    input.market === "IN"
-      ? config.fromNumberIN ?? config.fromNumber
-      : config.fromNumberUS ?? config.fromNumber;
+    input.fromNumber ??
+    (input.market === "IN"
+      ? (cred !== undefined ? cred.from_number_in ?? cred.from_number : base.fromNumberIN ?? base.fromNumber)
+      : (cred !== undefined ? cred.from_number_us ?? cred.from_number : base.fromNumberUS ?? base.fromNumber));
   const values = requireValues("Retell", {
-    apiKey: config.apiKey,
-    agentId: config.agentId,
+    apiKey,
+    agentId,
     fromNumber,
   });
-  const response = await fetch(`${config.apiUrl}/v2/create-phone-call`, {
+  const response = await fetch(`${apiUrl}/v2/create-phone-call`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${values.apiKey}`,
@@ -142,15 +175,21 @@ export async function startRetellCall(input: {
   return { callId: body.call_id };
 }
 
-export function hasRetellConfigForMarket(market?: "US" | "IN"): boolean {
-  const config = providerConfig().retell;
+export function hasRetellConfigForMarket(
+  market?: "US" | "IN",
+  credentials?: RetellCredentialOverride | null,
+): boolean {
+  const base = providerConfig().retell;
+  const cred = credentials ?? undefined;
+  const apiKey = cred !== undefined ? cred.api_key : base.apiKey;
+  const agentId = cred !== undefined ? cred.agent_id : base.agentId;
   const fromNumber =
     market === "IN"
-      ? config.fromNumberIN ?? config.fromNumber
+      ? (cred !== undefined ? cred.from_number_in ?? cred.from_number : base.fromNumberIN ?? base.fromNumber)
       : market === "US"
-        ? config.fromNumberUS ?? config.fromNumber
-        : config.fromNumberUS ?? config.fromNumberIN ?? config.fromNumber;
-  return Boolean(config.apiKey && config.agentId && fromNumber);
+        ? (cred !== undefined ? cred.from_number_us ?? cred.from_number : base.fromNumberUS ?? base.fromNumber)
+        : (cred !== undefined ? cred.from_number_us ?? cred.from_number_in ?? cred.from_number : base.fromNumberUS ?? base.fromNumberIN ?? base.fromNumber);
+  return Boolean(apiKey && agentId && fromNumber);
 }
 
 /**
@@ -203,20 +242,31 @@ export function extractRetellCall(body: Record<string, unknown>): Record<string,
     : body;
 }
 
-export function hasTwilioRoute(market: "US" | "IN"): boolean {
-  const config = providerConfig().twilio;
+export function hasTwilioRoute(
+  market: "US" | "IN",
+  credentials?: TwilioCredentialOverride | null,
+): boolean {
+  const base = providerConfig().twilio;
+  const cred = credentials ?? undefined;
+  const accountSid = cred?.account_sid ?? base.accountSid;
+  const authToken = cred?.auth_token ?? base.authToken;
   const fromNumber =
-    market === "IN" ? config.indiaFromNumber : config.usFromNumber;
-  return Boolean(config.accountSid && config.authToken && fromNumber);
+    market === "IN"
+      ? cred?.india_from_number ?? base.indiaFromNumber
+      : cred?.us_from_number ?? base.usFromNumber;
+  return Boolean(accountSid && authToken && fromNumber);
 }
 
 /**
  * Returns true if Twilio SMS can be sent for the given market.
  * Requires TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and the
- * market-appropriate TWILIO_FROM_NUMBER_* to be configured.
+ * market-appropriate TWILIO_FROM_NUMBER_* (or tenant credential) to be configured.
  */
-export function hasTwilioSmsConfig(market: "US" | "IN"): boolean {
-  return hasTwilioRoute(market);
+export function hasTwilioSmsConfig(
+  market: "US" | "IN",
+  credentials?: TwilioCredentialOverride | null,
+): boolean {
+  return hasTwilioRoute(market, credentials);
 }
 
 /**
@@ -229,13 +279,19 @@ export async function sendTwilioSms(input: {
   to: string;
   body: string;
   market: "US" | "IN";
+  credentials?: TwilioCredentialOverride | null;
 }): Promise<{ messageSid: string }> {
-  const config = providerConfig().twilio;
+  const base = providerConfig().twilio;
+  const cred = input.credentials ?? undefined;
+  const accountSid = cred?.account_sid ?? base.accountSid;
+  const authToken = cred?.auth_token ?? base.authToken;
   const fromNumber =
-    input.market === "IN" ? config.indiaFromNumber : config.usFromNumber;
+    input.market === "IN"
+      ? cred?.india_from_number ?? base.indiaFromNumber
+      : cred?.us_from_number ?? base.usFromNumber;
   const values = requireValues("Twilio SMS", {
-    accountSid: config.accountSid,
-    authToken: config.authToken,
+    accountSid,
+    authToken,
     fromNumber,
   });
 
@@ -273,7 +329,7 @@ export function providerReadiness(market: "US" | "IN") {
     retell: Boolean(config.retell.apiKey && config.retell.agentId && retellFrom),
     twilio: hasTwilioRoute(market),
     calcom: Boolean(config.calcom.apiKey && config.calcom.eventTypeId),
-    intake: Boolean(config.intakeWebhookSecret),
+    intake: isEncryptionConfigured(),
   };
 }
 
@@ -308,13 +364,15 @@ export async function getCalAvailability(input: {
   start: string;
   end: string;
   timeZone: string;
+  credentials?: CalcomCredentialOverride | null;
 }): Promise<unknown> {
-  const config = providerConfig().calcom;
+  const base = providerConfig().calcom;
+  const cred = input.credentials ?? undefined;
   const values = requireValues("Cal.com", {
-    apiKey: config.apiKey,
-    eventTypeId: config.eventTypeId,
+    apiKey: cred?.api_key ?? base.apiKey,
+    eventTypeId: cred?.event_type_id ?? base.eventTypeId,
   });
-  const url = new URL(`${config.apiUrl}/slots`);
+  const url = new URL(`${cred?.api_url ?? base.apiUrl}/slots`);
   url.searchParams.set("eventTypeId", values.eventTypeId);
   url.searchParams.set("start", input.start);
   url.searchParams.set("end", input.end);
@@ -333,13 +391,15 @@ export async function createCalBooking(input: {
   timeZone: string;
   attendee: { name: string; email: string; phoneNumber?: string };
   metadata: Record<string, string>;
+  credentials?: CalcomCredentialOverride | null;
 }): Promise<{ bookingId: string }> {
-  const config = providerConfig().calcom;
+  const base = providerConfig().calcom;
+  const cred = input.credentials ?? undefined;
   const values = requireValues("Cal.com", {
-    apiKey: config.apiKey,
-    eventTypeId: config.eventTypeId,
+    apiKey: cred?.api_key ?? base.apiKey,
+    eventTypeId: cred?.event_type_id ?? base.eventTypeId,
   });
-  const response = await fetch(`${config.apiUrl}/bookings`, {
+  const response = await fetch(`${cred?.api_url ?? base.apiUrl}/bookings`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${values.apiKey}`,

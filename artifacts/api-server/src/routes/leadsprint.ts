@@ -62,12 +62,15 @@ import {
   hasTwilioRoute,
   providerConfig,
   startRetellCall,
+  type CalcomCredentialOverride,
+  type RetellCredentialOverride,
 } from "../lib/providers";
+import { loadTenantProviderSecrets } from "../lib/security";
 import { evaluateCallPolicy, validateQuietHours } from "../lib/policy";
 import { getProfile, toApiProfile } from "../lib/verticals";
 import { demoVerticalIsHomeServices, seedHomeServicesDemo } from "../lib/demoSeedHomeServices";
 import { normalizePhone, samePhone, suppressContact } from "../lib/suppression";
-import { timezoneForUSPhoneNumber } from "../lib/areaCodeTimezones";
+import { timezoneForPhoneNumber, timezoneForUSPhoneNumber } from "../lib/areaCodeTimezones";
 import {
   ConsentEvidenceError,
   describeConsent,
@@ -484,16 +487,33 @@ router.post("/leads/import", requireRole(...OPERATIONS_ROLES), async (req, res):
     throw error;
   }
 
+  const business = await getBusiness(BUSINESS_ID);
+  const market = business?.market === "IN" ? "IN" : "US";
+  const dndStatus = body.data.dnd_status ?? "unknown";
+  const consentCategory = body.data.consent_category ?? "inquiry";
+
   let imported = 0;
   let skipped = 0;
   for (const row of body.data.rows) {
-    const phone = normalizePhone(row.phone);
-    const existing = await db.select({ id: contactsTable.id }).from(contactsTable).where(and(eq(contactsTable.businessId, BUSINESS_ID), samePhone(contactsTable.phone, row.phone))).limit(1);
+    const phone = normalizePhone(row.phone, market);
+    const existing = await db.select({ id: contactsTable.id }).from(contactsTable).where(and(eq(contactsTable.businessId, BUSINESS_ID), samePhone(contactsTable.phone, row.phone, market))).limit(1);
     if (existing[0]) { skipped += 1; continue; }
     const contactId = id("contact");
     const leadId = id("lead");
-    await db.insert(contactsTable).values({ id: contactId, businessId: BUSINESS_ID, name: row.name, phone, email: row.email ?? null, timezone: timezoneForUSPhoneNumber(phone), consentStatus: batchConsent.consentStatus, consentSource: batchConsent.consentSource, consentAt: batchConsent.consentAt });
-    await db.insert(leadsTable).values({ id: leadId, businessId: BUSINESS_ID, contactId, source: row.source ?? "CSV import", campaign: row.campaign ?? "Pilot campaign", project: row.project ?? (await getBusiness(BUSINESS_ID))?.projectName ?? "Configured project", propertyType: row.property_type ?? "Not specified", budgetLabel: row.budget_label ?? "Not specified", location: row.location ?? "Not specified", timeline: row.timeline ?? "Not specified", intentScore: 50, score: "warm", status: "new", nextAction: "Call lead" });
+    await db.insert(contactsTable).values({
+      id: contactId,
+      businessId: BUSINESS_ID,
+      name: row.name,
+      phone,
+      email: row.email ?? null,
+      timezone: timezoneForPhoneNumber(phone, market),
+      consentStatus: batchConsent.consentStatus,
+      consentSource: batchConsent.consentSource,
+      consentAt: batchConsent.consentAt,
+      dndStatus,
+      consentCategory,
+    });
+    await db.insert(leadsTable).values({ id: leadId, businessId: BUSINESS_ID, contactId, source: row.source ?? "CSV import", campaign: row.campaign ?? "Pilot campaign", project: row.project ?? business?.projectName ?? "Configured project", propertyType: row.property_type ?? "Not specified", budgetLabel: row.budget_label ?? "Not specified", location: row.location ?? "Not specified", timeline: row.timeline ?? "Not specified", intentScore: 50, score: "warm", status: "new", nextAction: "Call lead" });
     imported += 1;
   }
   await db.insert(activitiesTable).values({ id: id("activity"), businessId: BUSINESS_ID, type: "import", title: `${imported} leads imported`, detail: `CSV import completed with duplicate checks · consent: ${describeConsent(batchConsent)}` });
@@ -531,12 +551,24 @@ router.post("/calls/start", requireRole(...OPERATIONS_ROLES), async (req, res): 
   if (existing) { res.json(StartCallResponse.parse(await getCallDto(existing))); return; }
 
   const business = await getBusiness(BUSINESS_ID);
+  const market = business?.market === "IN" ? "IN" : "US";
+  let retellCreds: RetellCredentialOverride | null = null;
+  let calCreds: CalcomCredentialOverride | null = null;
+  try {
+    retellCreds = (await loadTenantProviderSecrets(db, BUSINESS_ID, "retell")) as RetellCredentialOverride | null;
+    calCreds = (await loadTenantProviderSecrets(db, BUSINESS_ID, "calcom")) as CalcomCredentialOverride | null;
+  } catch {
+    // Ignore unreadable credentials in readiness gate; falls back to env.
+  }
 
   // Setup gate: refuse to place live calls from a half-configured
   // workspace, before any row is written, so an unfinished onboarding is
   // an obvious error in the console rather than a mystery failure on a
   // real prospect's phone.
-  const setupBlocked = liveCallingBlockedReason(business);
+  const setupBlocked = liveCallingBlockedReason(business, {
+    retellConfigured: hasRetellConfigForMarket(market, retellCreds),
+    calcomConfigured: hasCalConfig(calCreds),
+  });
   if (setupBlocked) {
     res.status(409).json({ error: setupBlocked, code: "SETUP_INCOMPLETE" });
     return;
@@ -696,7 +728,19 @@ router.post("/appointments/book", requireRole(...OPERATIONS_ROLES), async (req, 
 router.get("/onboarding/checklist", requireRole(...READ_ROLES), async (req, res): Promise<void> => {
   const BUSINESS_ID = scopedBusinessId(req);
   const business = await getBusiness(BUSINESS_ID);
-  res.json(buildOnboardingChecklist(business));
+  const market = business?.market === "IN" ? "IN" : "US";
+  let retellCreds: RetellCredentialOverride | null = null;
+  let calCreds: CalcomCredentialOverride | null = null;
+  try {
+    retellCreds = (await loadTenantProviderSecrets(db, BUSINESS_ID, "retell")) as RetellCredentialOverride | null;
+    calCreds = (await loadTenantProviderSecrets(db, BUSINESS_ID, "calcom")) as CalcomCredentialOverride | null;
+  } catch {
+    // Fall back to deployment env checks cleanly.
+  }
+  res.json(buildOnboardingChecklist(business, {
+    retellConfigured: hasRetellConfigForMarket(market, retellCreds),
+    calcomConfigured: hasCalConfig(calCreds),
+  }));
 });
 
 router.get("/business-settings", requireRole(...READ_ROLES), async (_req, res): Promise<void> => {

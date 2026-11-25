@@ -5,7 +5,9 @@
  * LeadSprint operator console API
  * OpenAPI spec version: 0.1.0
  */
+import type { ConsentCategory } from './consentCategory';
 import type { ConsentStatus } from './consentStatus';
+import type { DndStatus } from './dndStatus';
 import type { LeadImportRow } from './leadImportRow';
 
 export interface LeadImportInput {
@@ -14,4 +16,6 @@ export interface LeadImportInput {
   /** Where and how consent was captured for this batch. Required when consent_status is "valid". */
   consent_source?: string;
   consent_at?: Date;
+  dnd_status?: DndStatus;
+  consent_category?: ConsentCategory;
 }

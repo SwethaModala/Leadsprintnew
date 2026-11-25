@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { Router, type IRouter, type Request } from "express";
+import { Router, type IRouter, type Request, type Response } from "express";
 import { and, eq } from "drizzle-orm";
 import {
   activitiesTable,
@@ -17,12 +17,20 @@ import {
   hasTwilioSmsConfig,
   providerConfig,
   sendTwilioSms,
+  type CalcomCredentialOverride,
+  type RetellCredentialOverride,
+  type TwilioCredentialOverride,
   verifyCalSignature,
   verifyRetellSignature,
   verifyTwilioSignature,
   verifyWebhookSignature,
 } from "../lib/providers";
-import { timezoneForUSPhoneNumber } from "../lib/areaCodeTimezones";
+import { timezoneForPhoneNumber } from "../lib/areaCodeTimezones";
+import {
+  authenticateTenantApiKey,
+  loadTenantProviderSecrets,
+} from "../lib/security";
+import { sha256Hex, timingSafeEqualString } from "../lib/crypto";
 import {
   ConsentEvidenceError,
   describeConsent,
@@ -145,19 +153,29 @@ function signatureFor(req: Request): string | undefined {
   return req.get("x-retell-signature") ?? req.get("x-leadsprint-signature");
 }
 
+function bearerOrApiKeyFrom(req: Request): string | undefined {
+  const authHeader = req.get("authorization");
+  if (authHeader && authHeader.toLowerCase().startsWith("bearer ")) {
+    const token = authHeader.slice(7).trim();
+    if (token) return token;
+  }
+  const headerKey = req.get("x-api-key")?.trim();
+  if (headerKey) return headerKey;
+  const legacyKey = req.get("x-leadsprint-key")?.trim();
+  if (legacyKey && legacyKey.startsWith("ls_live_")) return legacyKey;
+  return undefined;
+}
+
 /**
- * Optional second way to authenticate intake, for no-code senders (Zapier,
- * Make, Meta's CRM link) that cannot compute an HMAC: send the intake secret
- * itself in `x-leadsprint-key`. OFF unless INTAKE_ALLOW_KEY_AUTH=true. It is
- * weaker than the signature (a captured request can be replayed), so TLS is
- * required and HMAC stays the recommended method. Compared in constant time.
+ * Optional key auth for no-code senders against a *tenant-specific* encrypted
+ * intake webhook secret when INTAKE_ALLOW_KEY_AUTH=true. Never falls back to a
+ * deployment-global secret.
  */
-function intakeKeyAccepted(req: Request, secret: string | undefined): boolean {
-  if (process.env["INTAKE_ALLOW_KEY_AUTH"] !== "true" || !secret) return false;
-  const provided = req.get("x-leadsprint-key");
+function tenantLegacyKeyAccepted(req: Request, tenantSecret: string | undefined): boolean {
+  if (process.env["INTAKE_ALLOW_KEY_AUTH"] !== "true" || !tenantSecret) return false;
+  const provided = req.get("x-leadsprint-key")?.trim();
   if (!provided) return false;
-  const digest = (value: string) => crypto.createHash("sha256").update(value).digest();
-  return crypto.timingSafeEqual(digest(provided), digest(secret));
+  return timingSafeEqualString(provided, tenantSecret);
 }
 
 type IntakeConsent = ReturnType<typeof normalizeConsentEvidence> & { evidenceText: string | null };
@@ -223,35 +241,109 @@ function notifyEmergencyLead(
     .catch((err) => req.log?.warn?.({ err }, "Emergency lead email could not be sent"));
 }
 
-router.post("/webhooks/intake", async (req, res): Promise<void> => {
-  const config = providerConfig();
-  const signed = verifyWebhookSignature(rawBody(req), signatureFor(req), config.intakeWebhookSecret);
-  if (!signed && !intakeKeyAccepted(req, config.intakeWebhookSecret)) {
-    res.status(401).json({ error: "Invalid intake signature" });
-    return;
+async function handleIntakeWebhook(req: Request, res: Response): Promise<void> {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const paramBusinessId =
+    typeof req.params.businessId === "string" ? req.params.businessId.trim() : "";
+  const bodyBusinessId =
+    typeof body.business_id === "string" ? body.business_id.trim() : "";
+  const headerBusinessId = req.get("x-business-id")?.trim() ?? "";
+
+  let businessId = "";
+  let authenticatedVia: "api_key" | "hmac" | "legacy_key" | null = null;
+
+  const rawApiKey = bearerOrApiKeyFrom(req);
+  if (rawApiKey) {
+    const keyAuth = await authenticateTenantApiKey(db, rawApiKey, "leads:intake");
+    if (!keyAuth) {
+      res.status(401).json({ error: "Invalid or expired API key" });
+      return;
+    }
+    const requestedTenant = paramBusinessId || bodyBusinessId || headerBusinessId;
+    if (requestedTenant && requestedTenant !== keyAuth.businessId) {
+      res.status(403).json({ error: "API key is not authorized for the requested workspace" });
+      return;
+    }
+    businessId = keyAuth.businessId;
+    authenticatedVia = "api_key";
+  } else {
+    const candidateTenant = paramBusinessId || bodyBusinessId || headerBusinessId;
+    if (!candidateTenant) {
+      res.status(401).json({ error: "Tenant authentication required" });
+      return;
+    }
+    let intakeSecrets: Record<string, string> | null = null;
+    try {
+      intakeSecrets = await loadTenantProviderSecrets(db, candidateTenant, "intake");
+    } catch {
+      res.status(401).json({ error: "Invalid intake signature" });
+      return;
+    }
+    const tenantSecret = intakeSecrets?.webhook_secret;
+    const sigHeader = signatureFor(req);
+    const hmacValid = verifyWebhookSignature(rawBody(req), sigHeader, tenantSecret);
+    if (hmacValid) {
+      businessId = candidateTenant;
+      authenticatedVia = "hmac";
+    } else if (tenantLegacyKeyAccepted(req, tenantSecret)) {
+      businessId = candidateTenant;
+      authenticatedVia = "legacy_key";
+    } else {
+      res.status(401).json({ error: "Invalid intake signature" });
+      return;
+    }
   }
-  const body = req.body as Record<string, unknown>;
+
   const rawTimestamp = req.get("x-webhook-timestamp") ?? body.timestamp;
-  if (rawTimestamp !== undefined && rawTimestamp !== null && rawTimestamp !== "") {
+  if (authenticatedVia === "hmac") {
+    if (rawTimestamp === undefined || rawTimestamp === null || rawTimestamp === "") {
+      res.status(401).json({ error: "Webhook timestamp header (x-webhook-timestamp) or body.timestamp is required" });
+      return;
+    }
+    if (!isTimestampFresh(rawTimestamp as string | number | Date, 300)) {
+      res.status(400).json({ error: "Webhook timestamp expired" });
+      return;
+    }
+  } else if (rawTimestamp !== undefined && rawTimestamp !== null && rawTimestamp !== "") {
     if (!isTimestampFresh(rawTimestamp as string | number | Date, 300)) {
       res.status(400).json({ error: "Webhook timestamp expired" });
       return;
     }
   }
-  const businessId = typeof body.business_id === "string" ? body.business_id : "";
-  const name = typeof body.name === "string" ? body.name.trim() : "";
-  // Stored and compared in one canonical form (E.164), so "(213) 555-0111"
-  // and "+12135550111" are recognised as the same person.
-  const phone = typeof body.phone === "string" ? normalizePhone(body.phone) : "";
-  if (!businessId || !name || !phone) {
-    res.status(400).json({ error: "business_id, name, and phone are required" });
-    return;
-  }
+
   const [business] = await db.select().from(businessesTable).where(eq(businessesTable.id, businessId)).limit(1);
   if (!business) {
     res.status(404).json({ error: "Business not found" });
     return;
   }
+
+  const market = (business.market === "IN" ? "IN" : "US") as "US" | "IN";
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  const rawPhone = typeof body.phone === "string" ? body.phone : "";
+  const phone = rawPhone ? normalizePhone(rawPhone, market) : "";
+  if (!businessId || !name || !phone) {
+    res.status(400).json({ error: "business_id, name, and phone are required" });
+    return;
+  }
+
+  const explicitEventId = req.get("x-event-id")?.trim() || req.get("x-webhook-id")?.trim();
+  if (authenticatedVia === "hmac" || explicitEventId) {
+    const replayId =
+      explicitEventId ??
+      sha256Hex(`${signatureFor(req) ?? ""}:${String(rawTimestamp)}:${rawBody(req).toString("utf8")}`);
+    const freshEvent = await acceptProviderEvent({
+      businessId,
+      provider: "intake",
+      externalEventId: replayId,
+      eventType: "lead_intake",
+      payload: body,
+    });
+    if (!freshEvent) {
+      res.status(409).json({ error: "Duplicate webhook replay detected" });
+      return;
+    }
+  }
+
   // Industry fields. Validated before anything is written, so a malformed
   // payload creates nothing.
   const detailsResult = validateDetails(body.details);
@@ -264,9 +356,20 @@ router.post("/webhooks/intake", async (req, res): Promise<void> => {
     res.status(400).json({ error: "consent_text must be a string of at most 1000 characters." });
     return;
   }
+  const dndStatus =
+    body.dnd_status === "clear" || body.dnd_status === "registered" || body.dnd_status === "unknown"
+      ? body.dnd_status
+      : "unknown";
+  const consentCategory =
+    body.consent_category === "transactional" ||
+    body.consent_category === "promotional" ||
+    body.consent_category === "inquiry"
+      ? body.consent_category
+      : "inquiry";
+
   const consentText = typeof body.consent_text === "string" ? body.consent_text.trim() : "";
   const formId = typeof body.form_id === "string" ? body.form_id.trim().slice(0, 100) : "";
-  const [existing] = await db.select({ id: contactsTable.id, phone: contactsTable.phone }).from(contactsTable).where(and(eq(contactsTable.businessId, businessId), samePhone(contactsTable.phone, body.phone as string))).limit(1);
+  const [existing] = await db.select({ id: contactsTable.id, phone: contactsTable.phone }).from(contactsTable).where(and(eq(contactsTable.businessId, businessId), samePhone(contactsTable.phone, rawPhone, market))).limit(1);
   if (existing) {
     // A lead source revoking consent for someone we already hold must take
     // effect. Previously the duplicate check returned first, so a
@@ -299,7 +402,20 @@ router.post("/webhooks/intake", async (req, res): Promise<void> => {
 
   const contactId = `contact_${crypto.randomUUID().slice(0, 12)}`;
   const leadId = `lead_${crypto.randomUUID().slice(0, 12)}`;
-  await db.insert(contactsTable).values({ id: contactId, businessId, name, phone, email: typeof body.email === "string" ? body.email : null, timezone: timezoneForUSPhoneNumber(phone), consentStatus: consent.consentStatus, consentSource: consent.consentSource, consentAt: consent.consentAt, consentEvidence: consent.evidenceText });
+  await db.insert(contactsTable).values({
+    id: contactId,
+    businessId,
+    name,
+    phone,
+    email: typeof body.email === "string" ? body.email : null,
+    timezone: timezoneForPhoneNumber(phone, market),
+    consentStatus: consent.consentStatus,
+    consentSource: consent.consentSource,
+    consentAt: consent.consentAt,
+    consentEvidence: consent.evidenceText,
+    dndStatus,
+    consentCategory,
+  });
   // Urgency and the service-area decision are made here, once, from the
   // workspace's profile; the engine itself never branches on an industry.
   const urgency = classifyUrgency(getProfile(business.vertical), { urgency: body.urgency, problem: details.problem });
@@ -394,25 +510,39 @@ router.post("/webhooks/intake", async (req, res): Promise<void> => {
     urgency,
     call: callState,
   });
-});
+}
+
+router.post("/webhooks/intake", handleIntakeWebhook);
+router.post("/webhooks/intake/:businessId", handleIntakeWebhook);
 
 router.post("/webhooks/retell", async (req, res): Promise<void> => {
   const config = providerConfig();
-  // Retell signs with the API key that has the "webhook" badge, using
-  // v={timestamp},d={hex} over rawBody+timestamp — not the generic
-  // sha256-of-body scheme used elsewhere. See verifyRetellSignature.
-  const webhookKey = config.retell.webhookSecret ?? config.retell.apiKey;
-  if (!verifyRetellSignature(rawBody(req), req.get("x-retell-signature"), webhookKey)) {
-    res.status(401).json({ error: "Invalid Retell signature" });
-    return;
-  }
-  const body = req.body as Record<string, unknown>;
+  const body = (req.body ?? {}) as Record<string, unknown>;
   // Retell's real envelope is { event, call: {...} } — pull call fields
   // from the nested object, not the top level.
   const call = extractRetellCall(body);
   const callId = typeof call.call_id === "string" ? call.call_id : "";
   const metadata = (call.metadata && typeof call.metadata === "object" ? call.metadata : {}) as Record<string, unknown>;
   const businessId = typeof metadata.business_id === "string" ? metadata.business_id : "";
+
+  let tenantRetell: RetellCredentialOverride | null = null;
+  if (businessId) {
+    try {
+      tenantRetell = (await loadTenantProviderSecrets(db, businessId, "retell")) as RetellCredentialOverride | null;
+    } catch {
+      res.status(401).json({ error: "Invalid Retell signature" });
+      return;
+    }
+  }
+  const webhookKey =
+    tenantRetell?.webhook_secret ??
+    tenantRetell?.api_key ??
+    config.retell.webhookSecret ??
+    config.retell.apiKey;
+  if (!verifyRetellSignature(rawBody(req), req.get("x-retell-signature"), webhookKey)) {
+    res.status(401).json({ error: "Invalid Retell signature" });
+    return;
+  }
   if (!callId || !businessId) {
     res.status(400).json({ error: "call.call_id and call.metadata.business_id are required" });
     return;
@@ -543,7 +673,13 @@ router.post("/webhooks/retell", async (req, res): Promise<void> => {
         // and will actually read the SMS, but short enough to still feel instant.
         setTimeout(async () => {
           try {
-            if (!hasTwilioSmsConfig(market)) {
+            let twilioCredentials: TwilioCredentialOverride | null = null;
+            try {
+              twilioCredentials = (await loadTenantProviderSecrets(dbHandle, capturedBusinessId, "twilio")) as TwilioCredentialOverride | null;
+            } catch {
+              twilioCredentials = null;
+            }
+            if (!hasTwilioSmsConfig(market, twilioCredentials)) {
               req.log?.info?.(
                 { businessId: capturedBusinessId, callId: capturedCallId },
                 "Skipping missed-call SMS — Twilio not configured for market",
@@ -554,6 +690,7 @@ router.post("/webhooks/retell", async (req, res): Promise<void> => {
               to: contactRow.phone,
               body: smsBody,
               market,
+              credentials: twilioCredentials,
             });
             await dbHandle.insert(activitiesTable).values({
               id: `activity_${crypto.randomUUID().slice(0, 12)}`,
@@ -579,29 +716,43 @@ router.post("/webhooks/retell", async (req, res): Promise<void> => {
 
 router.post("/webhooks/twilio/status", async (req, res): Promise<void> => {
   const config = providerConfig();
-  const twilioSignatureValid = verifyTwilioSignature(
-    `${req.protocol}://${req.get("host")}${req.originalUrl}`,
-    req.body as Record<string, unknown>,
-    req.get("x-twilio-signature"),
-    config.twilio.authToken,
-  );
-  const signedBodyValid = verifyWebhookSignature(rawBody(req), signatureFor(req), config.twilio.webhookSecret);
-  if (!twilioSignatureValid && !signedBodyValid) {
-    res.status(401).json({ error: "Invalid Twilio signature" });
-    return;
-  }
-  const body = req.body as Record<string, unknown>;
+  const body = (req.body ?? {}) as Record<string, unknown>;
   const callId = typeof body.CallSid === "string" ? body.CallSid : "";
-  // Tenant identity must travel WITH the webhook: a `businessId` query
-  // parameter on the configured status-callback URL, or a `BusinessId` field
-  // from an internal gateway. Looking the tenant up by `provider_call_id`
-  // across all businesses would let one tenant's signed status webhook land
-  // on another tenant's call, so it is deliberately not done — an unscoped
-  // callback is rejected, never guessed.
   const businessId =
     (typeof body.BusinessId === "string" && body.BusinessId) ||
     (typeof req.query.businessId === "string" && req.query.businessId) ||
     "";
+
+  let tenantTwilio: TwilioCredentialOverride | null = null;
+  if (businessId) {
+    try {
+      tenantTwilio = (await loadTenantProviderSecrets(db, businessId, "twilio")) as TwilioCredentialOverride | null;
+    } catch {
+      res.status(401).json({ error: "Invalid Twilio signature" });
+      return;
+    }
+  }
+
+  const twilioAuthToken = tenantTwilio?.auth_token ?? config.twilio.authToken;
+  const twilioWebhookSecret = tenantTwilio?.webhook_secret ?? config.twilio.webhookSecret;
+  const twilioSignatureValid = verifyTwilioSignature(
+    `${req.protocol}://${req.get("host")}${req.originalUrl}`,
+    body,
+    req.get("x-twilio-signature"),
+    twilioAuthToken,
+  );
+  const signedBodyValid = verifyWebhookSignature(rawBody(req), signatureFor(req), twilioWebhookSecret);
+  if (!twilioSignatureValid && !signedBodyValid) {
+    res.status(401).json({ error: "Invalid Twilio signature" });
+    return;
+  }
+  const rawTwilioTs = req.get("x-twilio-timestamp") ?? req.get("x-webhook-timestamp");
+  if (rawTwilioTs !== undefined && rawTwilioTs !== null && rawTwilioTs !== "") {
+    if (!isTimestampFresh(rawTwilioTs, 300)) {
+      res.status(401).json({ error: "Stale Twilio webhook timestamp" });
+      return;
+    }
+  }
   if (!callId || !businessId) {
     res.status(400).json({ error: "CallSid and a business-scoped callback (businessId) are required" });
     return;
@@ -634,19 +785,30 @@ router.post("/webhooks/twilio/status", async (req, res): Promise<void> => {
 
 router.post("/webhooks/calcom", async (req, res): Promise<void> => {
   const config = providerConfig();
-  if (!verifyCalSignature(rawBody(req), req.get("x-cal-signature-256"), config.calcom.webhookSecret)) {
-    res.status(401).json({ error: "Invalid Cal.com signature" });
-    return;
-  }
-  const body = req.body as Record<string, unknown>;
-  if (body.createdAt !== undefined && body.createdAt !== null && !isTimestampFresh(body.createdAt as string, 300)) {
-    res.status(401).json({ error: "Stale Cal.com webhook timestamp" });
-    return;
-  }
+  const body = (req.body ?? {}) as Record<string, unknown>;
   // Cal.com's real webhook envelope is { triggerEvent, createdAt, payload }.
   const payload = (body.payload && typeof body.payload === "object" ? body.payload : {}) as Record<string, unknown>;
   const metadata = (payload.metadata && typeof payload.metadata === "object" ? payload.metadata : {}) as Record<string, unknown>;
   const businessId = typeof metadata.business_id === "string" ? metadata.business_id : "";
+
+  let tenantCalcom: CalcomCredentialOverride | null = null;
+  if (businessId) {
+    try {
+      tenantCalcom = (await loadTenantProviderSecrets(db, businessId, "calcom")) as CalcomCredentialOverride | null;
+    } catch {
+      res.status(401).json({ error: "Invalid Cal.com signature" });
+      return;
+    }
+  }
+  const calcomSecret = tenantCalcom?.webhook_secret ?? config.calcom.webhookSecret;
+  if (!verifyCalSignature(rawBody(req), req.get("x-cal-signature-256"), calcomSecret)) {
+    res.status(401).json({ error: "Invalid Cal.com signature" });
+    return;
+  }
+  if (!isTimestampFresh(body.createdAt as string | undefined, 300)) {
+    res.status(401).json({ error: "Stale Cal.com webhook timestamp" });
+    return;
+  }
   if (!businessId) {
     res.status(400).json({ error: "payload.metadata.business_id is required" });
     return;

@@ -43,11 +43,20 @@ type Db = typeof defaultDb;
  * the area-code lookup will not resolve a timezone for it, and the gate
  * blocks it rather than guessing.
  */
-export function normalizePhone(raw: string): string {
+export function normalizePhone(raw: string, market: "US" | "IN" = "US"): string {
   const trimmed = raw.trim();
   const digits = trimmed.replace(/[^\d]/g, "");
   if (trimmed.startsWith("+")) {
     return digits.length >= 8 && digits.length <= 15 ? `+${digits}` : trimmed;
+  }
+  if (digits.length === 12 && /^91[1-9]\d{9}$/.test(digits)) {
+    return `+${digits}`;
+  }
+  if (market === "IN") {
+    if (digits.length === 10 && /^[6-9]\d{9}$/.test(digits)) return `+91${digits}`;
+    if (digits.length === 11 && /^0[6-9]\d{9}$/.test(digits)) return `+91${digits.slice(1)}`;
+    if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+    return trimmed;
   }
   if (digits.length === 10) return `+1${digits}`;
   if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
@@ -55,15 +64,22 @@ export function normalizePhone(raw: string): string {
 }
 
 /**
- * The digit strings a number may have been stored as. For NANP numbers this
- * is both "12135550111" and "2135550111", since older rows hold whatever the
- * lead source sent ("+1 213…", "(213) 555-0111", "213-555-0111").
+ * The digit strings a number may have been stored as. Covers both US NANP
+ * ("12135550111", "2135550111") and India +91 ("919876543210", "9876543210",
+ * "09876543210") so suppression/DND matching cannot be bypassed by formatting.
  */
-function digitKeys(raw: string): string[] {
-  const digits = normalizePhone(raw).replace(/[^\d]/g, "");
+function digitKeys(raw: string, market: "US" | "IN" = "US"): string[] {
+  const digits = normalizePhone(raw, market).replace(/[^\d]/g, "");
   if (!digits) return [raw.trim()];
   const keys = new Set([digits]);
-  if (digits.length === 11 && digits.startsWith("1")) keys.add(digits.slice(1));
+  if (digits.length === 11 && digits.startsWith("1")) {
+    keys.add(digits.slice(1));
+  }
+  if (digits.length === 12 && /^91[1-9]\d{9}$/.test(digits)) {
+    const national = digits.slice(2);
+    keys.add(national);
+    keys.add(`0${national}`);
+  }
   return Array.from(keys);
 }
 
@@ -73,15 +89,20 @@ function digitKeys(raw: string): string[] {
  * whatever the lead source sent, so comparing canonical strings alone would
  * miss them — and a missed match here is a person who opted out being called.
  */
-export function samePhone(column: AnyColumn, raw: string): SQL {
-  return inArray(sql`regexp_replace(${column}, '[^0-9]', '', 'g')`, digitKeys(raw));
+export function samePhone(column: AnyColumn, raw: string, market: "US" | "IN" = "US"): SQL {
+  return inArray(sql`regexp_replace(${column}, '[^0-9]', '', 'g')`, digitKeys(raw, market));
 }
 
-export async function isPhoneSuppressed(db: Db, businessId: string, phone: string): Promise<boolean> {
+export async function isPhoneSuppressed(
+  db: Db,
+  businessId: string,
+  phone: string,
+  market: "US" | "IN" = "US",
+): Promise<boolean> {
   const [hit] = await db
     .select({ id: suppressionsTable.id })
     .from(suppressionsTable)
-    .where(and(eq(suppressionsTable.businessId, businessId), samePhone(suppressionsTable.phone, phone)))
+    .where(and(eq(suppressionsTable.businessId, businessId), samePhone(suppressionsTable.phone, phone, market)))
     .limit(1);
   return Boolean(hit);
 }

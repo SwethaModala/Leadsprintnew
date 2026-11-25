@@ -228,7 +228,9 @@ export const ImportLeadsBody = zod.object({
 })),
   "consent_status": zod.enum(['unknown', 'valid', 'revoked']).optional(),
   "consent_source": zod.string().optional().describe('Where and how consent was captured for this batch. Required when consent_status is \"valid\".'),
-  "consent_at": zod.coerce.date().optional()
+  "consent_at": zod.coerce.date().optional(),
+  "dnd_status": zod.enum(['unknown', 'clear', 'registered']).optional(),
+  "consent_category": zod.enum(['inquiry', 'transactional', 'promotional']).optional()
 })
 
 export const importLeadsResponseLeadsItemIntentScoreMin = 0;
@@ -991,6 +993,422 @@ export const GetAuditLogsResponse = zod.object({
   "details": zod.record(zod.string(), zod.unknown()).nullable(),
   "created_at": zod.coerce.date()
 }))
+})
+
+
+/**
+ * @summary List scoped API keys for the active workspace (masked metadata only)
+ */
+export const ListApiKeysResponse = zod.object({
+  "keys": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "key_prefix": zod.string(),
+  "scopes": zod.array(zod.string()),
+  "last_used_at": zod.coerce.date().nullable(),
+  "expires_at": zod.coerce.date().nullable(),
+  "revoked_at": zod.coerce.date().nullable(),
+  "created_at": zod.coerce.date()
+}))
+})
+
+
+/**
+ * @summary Create a scoped per-tenant API key (raw secret returned once)
+ */
+export const createApiKeyBodyNameMin = 2;
+export const createApiKeyBodyNameMax = 80;
+
+export const createApiKeyBodyExpiresInDaysMax = 365;
+
+
+
+export const CreateApiKeyBody = zod.object({
+  "name": zod.string().min(createApiKeyBodyNameMin).max(createApiKeyBodyNameMax),
+  "scopes": zod.array(zod.string()).optional(),
+  "expires_in_days": zod.number().min(1).max(createApiKeyBodyExpiresInDaysMax).optional()
+})
+
+export const CreateApiKeyResponse = zod.object({
+  "api_key": zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "key_prefix": zod.string(),
+  "scopes": zod.array(zod.string()),
+  "last_used_at": zod.coerce.date().nullable(),
+  "expires_at": zod.coerce.date().nullable(),
+  "revoked_at": zod.coerce.date().nullable(),
+  "created_at": zod.coerce.date()
+}),
+  "secret_key": zod.string()
+})
+
+
+/**
+ * @summary Revoke a tenant API key
+ */
+export const RevokeApiKeyParams = zod.object({
+  "keyId": zod.coerce.string()
+})
+
+export const RevokeApiKeyResponse = zod.object({
+  "revoked_key_id": zod.string(),
+  "revoked_at": zod.coerce.date()
+})
+
+
+/**
+ * @summary List encrypted provider credential status and masked hints (never plaintext secrets)
+ */
+export const ListProviderCredentialsResponse = zod.object({
+  "encryption_configured": zod.boolean(),
+  "credentials": zod.array(zod.object({
+  "provider": zod.enum(['retell', 'twilio', 'calcom', 'intake']),
+  "configured": zod.boolean(),
+  "key_version": zod.number().nullable(),
+  "masked_hints": zod.record(zod.string(), zod.string()),
+  "updated_at": zod.coerce.date().nullable()
+}))
+})
+
+
+/**
+ * @summary Encrypt and store per-tenant provider credentials with AES-256-GCM
+ */
+export const UpsertProviderCredentialsParams = zod.object({
+  "provider": zod.enum(['retell', 'twilio', 'calcom', 'intake'])
+})
+
+export const UpsertProviderCredentialsBody = zod.object({
+  "config": zod.record(zod.string(), zod.string())
+})
+
+export const UpsertProviderCredentialsResponse = zod.object({
+  "credential": zod.object({
+  "provider": zod.enum(['retell', 'twilio', 'calcom', 'intake']),
+  "configured": zod.boolean(),
+  "key_version": zod.number().nullable(),
+  "masked_hints": zod.record(zod.string(), zod.string()),
+  "updated_at": zod.coerce.date().nullable()
+})
+})
+
+
+/**
+ * @summary Remove stored encrypted credentials for a provider
+ */
+export const DeleteProviderCredentialsParams = zod.object({
+  "provider": zod.enum(['retell', 'twilio', 'calcom', 'intake'])
+})
+
+export const DeleteProviderCredentialsResponse = zod.object({
+  "deleted_provider": zod.enum(['retell', 'twilio', 'calcom', 'intake'])
+})
+
+
+/**
+ * @summary List workspace agents
+ */
+export const GetAgentsResponse = zod.object({
+  "agents": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "use_case": zod.enum(['real_estate', 'home_services', 'insurance', 'mortgage', 'general']),
+  "status": zod.enum(['draft', 'active', 'paused']),
+  "voice_id": zod.string().nullish(),
+  "language": zod.string().nullish(),
+  "retell_agent_id": zod.string().nullish(),
+  "calls_today": zod.number(),
+  "created_at": zod.coerce.date(),
+  "updated_at": zod.coerce.date().nullish()
+}))
+})
+
+
+/**
+ * @summary Create a new agent
+ */
+export const postAgentsBodyCreateRetellDefault = false;
+
+export const PostAgentsBody = zod.object({
+  "name": zod.string(),
+  "use_case": zod.enum(['real_estate', 'home_services', 'insurance', 'mortgage', 'general']),
+  "system_prompt": zod.string().optional(),
+  "greeting_message": zod.string().optional(),
+  "fallback_message": zod.string().optional(),
+  "voice_id": zod.string().optional(),
+  "language": zod.string().optional(),
+  "temperature": zod.number().optional(),
+  "create_retell": zod.boolean().default(postAgentsBodyCreateRetellDefault)
+})
+
+export const PostAgentsResponse = zod.object({
+  "agent": zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "use_case": zod.enum(['real_estate', 'home_services', 'insurance', 'mortgage', 'general']),
+  "status": zod.enum(['draft', 'active', 'paused']),
+  "voice_id": zod.string().nullish(),
+  "language": zod.string().nullish(),
+  "retell_agent_id": zod.string().nullish(),
+  "calls_today": zod.number(),
+  "created_at": zod.coerce.date(),
+  "updated_at": zod.coerce.date().nullish()
+}).and(zod.object({
+  "system_prompt": zod.string().nullish(),
+  "greeting_message": zod.string().nullish(),
+  "fallback_message": zod.string().nullish(),
+  "temperature": zod.number().nullish(),
+  "retell_llm_id": zod.string().nullish()
+}))
+})
+
+
+/**
+ * @summary List agents in the connected Retell account
+ */
+export const GetAgentsRetellRemoteResponse = zod.object({
+  "agents": zod.array(zod.object({
+  "retell_agent_id": zod.string(),
+  "agent_name": zod.string(),
+  "voice_id": zod.string(),
+  "language": zod.string(),
+  "last_modification_timestamp": zod.number()
+}))
+})
+
+
+/**
+ * @summary List available Retell voices
+ */
+export const GetAgentsRetellVoicesResponse = zod.object({
+  "voices": zod.array(zod.object({
+  "voice_id": zod.string(),
+  "voice_name": zod.string(),
+  "provider": zod.string(),
+  "accent": zod.string().nullish(),
+  "gender": zod.string().nullish(),
+  "age": zod.string().nullish(),
+  "preview_audio_url": zod.string().nullish()
+}))
+})
+
+
+/**
+ * @summary Get agent detail
+ */
+export const GetAgentsAgentIdParams = zod.object({
+  "agentId": zod.coerce.string()
+})
+
+export const GetAgentsAgentIdResponse = zod.object({
+  "agent": zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "use_case": zod.enum(['real_estate', 'home_services', 'insurance', 'mortgage', 'general']),
+  "status": zod.enum(['draft', 'active', 'paused']),
+  "voice_id": zod.string().nullish(),
+  "language": zod.string().nullish(),
+  "retell_agent_id": zod.string().nullish(),
+  "calls_today": zod.number(),
+  "created_at": zod.coerce.date(),
+  "updated_at": zod.coerce.date().nullish()
+}).and(zod.object({
+  "system_prompt": zod.string().nullish(),
+  "greeting_message": zod.string().nullish(),
+  "fallback_message": zod.string().nullish(),
+  "temperature": zod.number().nullish(),
+  "retell_llm_id": zod.string().nullish()
+}))
+})
+
+
+/**
+ * @summary Update agent
+ */
+export const PatchAgentsAgentIdParams = zod.object({
+  "agentId": zod.coerce.string()
+})
+
+export const PatchAgentsAgentIdBody = zod.object({
+  "name": zod.string().optional(),
+  "status": zod.enum(['draft', 'active', 'paused']).optional(),
+  "system_prompt": zod.string().optional(),
+  "greeting_message": zod.string().optional(),
+  "fallback_message": zod.string().optional(),
+  "voice_id": zod.string().optional(),
+  "language": zod.string().optional(),
+  "temperature": zod.number().optional()
+})
+
+export const PatchAgentsAgentIdResponse = zod.object({
+  "agent": zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "use_case": zod.enum(['real_estate', 'home_services', 'insurance', 'mortgage', 'general']),
+  "status": zod.enum(['draft', 'active', 'paused']),
+  "voice_id": zod.string().nullish(),
+  "language": zod.string().nullish(),
+  "retell_agent_id": zod.string().nullish(),
+  "calls_today": zod.number(),
+  "created_at": zod.coerce.date(),
+  "updated_at": zod.coerce.date().nullish()
+}).and(zod.object({
+  "system_prompt": zod.string().nullish(),
+  "greeting_message": zod.string().nullish(),
+  "fallback_message": zod.string().nullish(),
+  "temperature": zod.number().nullish(),
+  "retell_llm_id": zod.string().nullish()
+}))
+})
+
+
+/**
+ * @summary Delete agent
+ */
+export const DeleteAgentsAgentIdParams = zod.object({
+  "agentId": zod.coerce.string()
+})
+
+export const DeleteAgentsAgentIdResponse = zod.object({
+  "deleted_id": zod.string()
+})
+
+
+/**
+ * @summary Publish agent to Retell and snapshot version
+ */
+export const PostAgentsAgentIdPublishParams = zod.object({
+  "agentId": zod.coerce.string()
+})
+
+export const PostAgentsAgentIdPublishResponse = zod.object({
+  "version_number": zod.number().nullish(),
+  "published_at": zod.coerce.date()
+})
+
+
+/**
+ * @summary List published versions of an agent
+ */
+export const GetAgentsAgentIdVersionsParams = zod.object({
+  "agentId": zod.coerce.string()
+})
+
+export const GetAgentsAgentIdVersionsResponse = zod.object({
+  "versions": zod.array(zod.object({
+  "id": zod.string(),
+  "version_number": zod.number(),
+  "published_by": zod.string(),
+  "published_at": zod.coerce.date(),
+  "notes": zod.string().nullish()
+}))
+})
+
+
+/**
+ * @summary Link an existing Retell agent to this workspace agent
+ */
+export const PostAgentsAgentIdRetellLinkParams = zod.object({
+  "agentId": zod.coerce.string()
+})
+
+export const PostAgentsAgentIdRetellLinkBody = zod.object({
+  "retell_agent_id": zod.string(),
+  "retell_llm_id": zod.string().optional()
+})
+
+export const PostAgentsAgentIdRetellLinkResponse = zod.object({
+  "agent": zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "use_case": zod.enum(['real_estate', 'home_services', 'insurance', 'mortgage', 'general']),
+  "status": zod.enum(['draft', 'active', 'paused']),
+  "voice_id": zod.string().nullish(),
+  "language": zod.string().nullish(),
+  "retell_agent_id": zod.string().nullish(),
+  "calls_today": zod.number(),
+  "created_at": zod.coerce.date(),
+  "updated_at": zod.coerce.date().nullish()
+}).and(zod.object({
+  "system_prompt": zod.string().nullish(),
+  "greeting_message": zod.string().nullish(),
+  "fallback_message": zod.string().nullish(),
+  "temperature": zod.number().nullish(),
+  "retell_llm_id": zod.string().nullish()
+}))
+})
+
+
+/**
+ * @summary Create a Retell web-call sandbox test
+ */
+export const PostAgentsAgentIdTestWebCallParams = zod.object({
+  "agentId": zod.coerce.string()
+})
+
+export const PostAgentsAgentIdTestWebCallResponse = zod.object({
+  "access_token": zod.string(),
+  "call_id": zod.string()
+})
+
+
+/**
+ * @summary List workspace phone numbers
+ */
+export const GetPhoneNumbersResponse = zod.object({
+  "phone_numbers": zod.array(zod.object({
+  "id": zod.string(),
+  "e164_number": zod.string(),
+  "nickname": zod.string().nullish(),
+  "inbound_agent_id": zod.string().nullish(),
+  "outbound_agent_id": zod.string().nullish(),
+  "is_active": zod.boolean(),
+  "created_at": zod.coerce.date()
+}))
+})
+
+
+/**
+ * @summary Sync phone numbers from Retell into this workspace
+ */
+export const PostPhoneNumbersSyncResponse = zod.object({
+  "synced": zod.number(),
+  "phone_numbers": zod.array(zod.object({
+  "id": zod.string(),
+  "e164_number": zod.string(),
+  "nickname": zod.string().nullish(),
+  "inbound_agent_id": zod.string().nullish(),
+  "outbound_agent_id": zod.string().nullish(),
+  "is_active": zod.boolean(),
+  "created_at": zod.coerce.date()
+}))
+})
+
+
+/**
+ * @summary Update phone number nickname or agent binding
+ */
+export const PatchPhoneNumbersPhoneNumberIdParams = zod.object({
+  "phoneNumberId": zod.coerce.string()
+})
+
+export const PatchPhoneNumbersPhoneNumberIdBody = zod.object({
+  "nickname": zod.string().optional(),
+  "inbound_agent_id": zod.string().nullish(),
+  "outbound_agent_id": zod.string().nullish()
+})
+
+export const PatchPhoneNumbersPhoneNumberIdResponse = zod.object({
+  "phone_number": zod.object({
+  "id": zod.string(),
+  "e164_number": zod.string(),
+  "nickname": zod.string().nullish(),
+  "inbound_agent_id": zod.string().nullish(),
+  "outbound_agent_id": zod.string().nullish(),
+  "is_active": zod.boolean(),
+  "created_at": zod.coerce.date()
+})
 })
 
 

@@ -62,6 +62,8 @@ CREATE TABLE contacts (
   consent_at timestamptz,
   consent_evidence text,
   suppressed_at timestamptz,
+  dnd_status text NOT NULL DEFAULT 'unknown',
+  consent_category text NOT NULL DEFAULT 'inquiry',
   timezone text
 );
 CREATE TABLE leads (
@@ -210,6 +212,97 @@ CREATE TABLE audit_logs (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX audit_logs_business_created_idx ON audit_logs (business_id, created_at);
+CREATE TABLE api_keys (
+  id text PRIMARY KEY,
+  business_id text NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  created_by_user_id text REFERENCES users(id) ON DELETE SET NULL,
+  name text NOT NULL,
+  key_prefix text NOT NULL,
+  key_hash text NOT NULL UNIQUE,
+  scopes jsonb NOT NULL DEFAULT '["leads:intake"]'::jsonb,
+  last_used_at timestamptz,
+  revoked_at timestamptz,
+  expires_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX api_keys_business_created_idx ON api_keys (business_id, created_at);
+CREATE TABLE provider_credentials (
+  id text PRIMARY KEY,
+  business_id text NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  provider text NOT NULL,
+  encrypted_config text NOT NULL,
+  key_version integer NOT NULL DEFAULT 1,
+  metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX provider_credentials_business_provider_unique ON provider_credentials (business_id, provider);
+CREATE TABLE agents (
+  id text PRIMARY KEY,
+  business_id text NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  created_by_user_id text REFERENCES users(id) ON DELETE SET NULL,
+  name text NOT NULL,
+  use_case text NOT NULL DEFAULT 'real_estate_qualifier',
+  status text NOT NULL DEFAULT 'draft',
+  language text NOT NULL DEFAULT 'en-US',
+  retell_agent_id text,
+  retell_llm_id text,
+  published_version integer,
+  voice_id text,
+  voice_model text,
+  voice_speed numeric DEFAULT '1.0',
+  voice_temperature numeric DEFAULT '0.0',
+  greeting text NOT NULL DEFAULT '',
+  system_prompt text NOT NULL DEFAULT '',
+  fallback_message text NOT NULL DEFAULT 'Let me connect you with a team member who can help.',
+  qualification_questions jsonb NOT NULL DEFAULT '[]'::jsonb,
+  escalation_rules text NOT NULL DEFAULT 'Transfer questions outside approved business information to a human.',
+  tools_config jsonb NOT NULL DEFAULT '{}'::jsonb,
+  call_behavior jsonb NOT NULL DEFAULT '{}'::jsonb,
+  working_days text[] NOT NULL DEFAULT ARRAY['Mon','Tue','Wed','Thu','Fri'],
+  hours_start text NOT NULL DEFAULT '09:00',
+  hours_end text NOT NULL DEFAULT '21:00',
+  last_synced_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX agents_business_retell_agent_unique ON agents (business_id, retell_agent_id);
+CREATE INDEX agents_business_status_idx ON agents (business_id, status);
+CREATE TABLE agent_versions (
+  id text PRIMARY KEY,
+  business_id text NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  agent_id text NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  version_number integer NOT NULL,
+  retell_version integer,
+  snapshot jsonb NOT NULL DEFAULT '{}'::jsonb,
+  published_by_user_id text REFERENCES users(id) ON DELETE SET NULL,
+  published_at timestamptz NOT NULL DEFAULT now(),
+  notes text
+);
+CREATE TABLE phone_numbers (
+  id text PRIMARY KEY,
+  business_id text NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  provider text NOT NULL DEFAULT 'retell',
+  e164_number text NOT NULL UNIQUE,
+  nickname text,
+  market text NOT NULL DEFAULT 'US',
+  inbound_agent_id text REFERENCES agents(id) ON DELETE SET NULL,
+  outbound_agent_id text REFERENCES agents(id) ON DELETE SET NULL,
+  status text NOT NULL DEFAULT 'active',
+  retell_synced_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX phone_numbers_business_idx ON phone_numbers (business_id);
+ALTER TABLE calls ADD COLUMN agent_id text;
+ALTER TABLE calls ADD COLUMN phone_number_id text;
+ALTER TABLE calls ADD COLUMN direction text NOT NULL DEFAULT 'outbound';
+ALTER TABLE calls ADD COLUMN caller_number text;
+ALTER TABLE calls ADD COLUMN destination_number text;
+ALTER TABLE calls ADD COLUMN transcript text;
+ALTER TABLE calls ADD COLUMN transcript_json jsonb;
+ALTER TABLE calls ADD COLUMN recording_url text;
+ALTER TABLE calls ADD COLUMN disconnection_reason text;
 `;
 
 export async function createTestDb(): Promise<TestDb> {

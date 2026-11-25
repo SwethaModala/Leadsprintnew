@@ -18,6 +18,8 @@
 export type PolicyBlockReason =
   | "consent_invalid"
   | "suppressed"
+  | "dnd_registered"
+  | "dnd_unverified"
   | "location_unknown"
   | "quiet_hours"
   | "attempt_limit"
@@ -30,6 +32,7 @@ export interface PolicyDecision {
 }
 
 export interface PolicyBusinessInput {
+  market?: "US" | "IN";
   timezone: string;
   quietHours: string | null | undefined;
   maxCallAttempts: number;
@@ -38,28 +41,30 @@ export interface PolicyBusinessInput {
 export interface PolicyContactInput {
   consentStatus: string;
   suppressedAt: Date | null;
+  dndStatus?: string | null;
+  consentCategory?: string | null;
   // True when this contact's number is on the business's do-not-call list
   // (lib/suppression.ts), whichever contact row the opt-out was recorded on.
   // Optional only so pure unit tests can omit it; the dispatcher always sets it.
   onSuppressionList?: boolean;
   // The CALLED PARTY's IANA timezone (see lib/areaCodeTimezones.ts) — not
-  // the business's. TCPA quiet hours (8am–9pm) are defined by the
-  // recipient's local time. `null`/`undefined` means we couldn't
-  // determine it, which blocks the call rather than falling back to the
-  // business's timezone — an unverified location is treated the same as
-  // an unsafe one, per the product spec's "block ambiguous or invalid
-  // location data" requirement.
+  // the business's. TCPA quiet hours (8am–9pm) / TRAI hours (9am–9pm IST)
+  // are defined by the recipient's local time.
   timezone: string | null | undefined;
 }
 
 /**
  * The widest window LeadSprint will ever dial in, in the RECIPIENT's local
- * time, whatever a business configures. The federal TCPA window is
- * 08:00–21:00, but several states (e.g. Florida, Oklahoma) cut off at 20:00,
- * and a pilot sold across states should not depend on each operator knowing
- * that. A business can narrow this with quiet hours; it cannot widen it.
+ * time, whatever a business configures.
+ * - US: 08:00–20:00 (covers FL/OK 8pm cutoffs)
+ * - IN (TRAI TCCCPR): 09:00–21:00 IST
  */
 export const CALLING_WINDOW_FLOOR = { start: 8 * 60, end: 20 * 60 } as const;
+export const TRAI_CALLING_WINDOW_FLOOR = { start: 9 * 60, end: 21 * 60 } as const;
+
+export function callingWindowFloorForMarket(market: "US" | "IN" = "US") {
+  return market === "IN" ? TRAI_CALLING_WINDOW_FLOOR : CALLING_WINDOW_FLOOR;
+}
 
 interface QuietHoursWindow {
   startMinutes: number;
@@ -120,13 +125,15 @@ export function isWithinQuietHours(
   quietHours: string | null | undefined,
   timezone: string,
   now: Date = new Date(),
+  market: "US" | "IN" = "US",
 ): boolean {
   const window = parseQuietHours(quietHours);
   if (!window) return true;
   const nowMinutes = localMinutesIn(timezone, now);
   if (nowMinutes === null) return true;
 
-  if (nowMinutes < CALLING_WINDOW_FLOOR.start || nowMinutes >= CALLING_WINDOW_FLOOR.end) return true;
+  const floor = callingWindowFloorForMarket(market);
+  if (nowMinutes < floor.start || nowMinutes >= floor.end) return true;
 
   const { startMinutes, endMinutes } = window;
   if (startMinutes < endMinutes) {
@@ -137,33 +144,17 @@ export function isWithinQuietHours(
   return nowMinutes >= startMinutes || nowMinutes < endMinutes;
 }
 
-/**
- * The instant the current quiet-hours block ends — i.e. when it becomes
- * lawful to call this recipient again — or `now` when the window is already
- * open.
- *
- * This exists because a retry that fires on a fixed timer cannot cross a
- * night: a lead that arrives at 22:00 is blocked until 08:00, which is ten
- * 30-minute worker ticks away, so a fixed-interval retry gives up long
- * before the window opens and that enquiry is never called. Deferring to
- * the opening of the window is what makes "retry a call blocked by quiet
- * hours" mean something.
- *
- * Stepped rather than solved analytically so it stays correct across DST
- * transitions and half-hour offsets: `isWithinQuietHours` is the single
- * definition of "blocked", and this walks forward until it stops being
- * true. Resolves to within `stepMs` of the real opening.
- */
 export function nextAllowedCallTime(
   quietHours: string | null | undefined,
   timezone: string,
   now: Date = new Date(),
   stepMs = 5 * 60 * 1000,
+  market: "US" | "IN" = "US",
 ): Date {
-  if (!isWithinQuietHours(quietHours, timezone, now)) return now;
+  if (!isWithinQuietHours(quietHours, timezone, now, market)) return now;
   const limit = now.getTime() + 24 * 60 * 60 * 1000;
   for (let t = now.getTime() + stepMs; t <= limit; t += stepMs) {
-    if (!isWithinQuietHours(quietHours, timezone, new Date(t))) {
+    if (!isWithinQuietHours(quietHours, timezone, new Date(t), market)) {
       // One minute past the boundary, so the retry cannot land a second
       // before the window opens and read as still-blocked.
       return new Date(t + 60 * 1000);
@@ -195,12 +186,31 @@ export function evaluateCallPolicy(input: {
     };
   }
 
+  const market = business.market === "IN" ? "IN" : "US";
+
   if (contact.suppressedAt || contact.onSuppressionList) {
     return {
       allowed: false,
       reason: "suppressed",
       message: "This contact is suppressed and cannot be called.",
     };
+  }
+
+  if (market === "IN") {
+    if (contact.dndStatus === "registered") {
+      return {
+        allowed: false,
+        reason: "dnd_registered",
+        message: "Contact number is marked as DND registered under TRAI rules and cannot be dialed.",
+      };
+    }
+    if (contact.consentCategory === "promotional" && contact.dndStatus !== "clear") {
+      return {
+        allowed: false,
+        reason: "dnd_unverified",
+        message: "Promotional calls in India require verified non-DND (clear) status.",
+      };
+    }
   }
 
   if (!contact.timezone) {
@@ -211,11 +221,12 @@ export function evaluateCallPolicy(input: {
     };
   }
 
-  if (isWithinQuietHours(business.quietHours, contact.timezone, now)) {
+  if (isWithinQuietHours(business.quietHours, contact.timezone, now, market)) {
+    const floorLabel = market === "IN" ? "never before 09:00 or after 21:00 IST" : "never before 08:00 or after 20:00";
     return {
       allowed: false,
       reason: "quiet_hours",
-      message: `Outside allowed calling hours (quiet hours ${business.quietHours}, never before 08:00 or after 20:00; ${contact.timezone}, recipient local time).`,
+      message: `Outside allowed calling hours (quiet hours ${business.quietHours}, ${floorLabel}; ${contact.timezone}, recipient local time).`,
     };
   }
 

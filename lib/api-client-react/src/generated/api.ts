@@ -23,6 +23,10 @@ import type {
   AcceptInvitationRequest,
   AcceptInvitationResponse,
   Activity,
+  AgentDetailResponse,
+  AgentListResponse,
+  AgentVersionListResponse,
+  ApiKeyListResponse,
   Appointment,
   AppointmentInput,
   AuditLogsResponse,
@@ -31,7 +35,14 @@ import type {
   BusinessSettings,
   BusinessSettingsUpdate,
   Call,
+  CreateAgentRequest,
+  CreateAgentResult,
+  CreateApiKeyRequest,
+  CreateApiKeyResult,
   CreateOrganizationRequest,
+  CredentialProvider,
+  DeleteAgentResult,
+  DeleteProviderCredentialResult,
   Error,
   GetActivityParams,
   GetAuditLogsParams,
@@ -48,8 +59,17 @@ import type {
   OnboardingChecklist,
   OrganizationSwitchResponse,
   OrganizationsResponse,
+  PhoneNumberListResponse,
+  PhoneNumberSyncResult,
+  ProviderCredentialListResponse,
+  PublishAgentResult,
   ReadinessStatus,
   RemoveTeamMemberResult,
+  RetellLinkRequest,
+  RetellLinkResult,
+  RetellRemoteAgentListResponse,
+  RetellVoiceListResponse,
+  RevokeApiKeyResult,
   Slot,
   StartCallInput,
   SuppressionInput,
@@ -58,8 +78,15 @@ import type {
   TeamMemberResponse,
   TeamRosterResponse,
   Today,
+  UpdateAgentRequest,
+  UpdateAgentResult,
+  UpdatePhoneNumberRequest,
+  UpdatePhoneNumberResult,
   UpdateTeamMemberRoleRequest,
+  UpsertProviderCredentialResult,
+  UpsertProviderCredentialsRequest,
   Usage,
+  WebCallResult,
   WeeklyReport
 } from './api.schemas';
 
@@ -2851,4 +2878,1476 @@ export function useGetAuditLogs<TData = Awaited<ReturnType<typeof getAuditLogs>>
 
 
 
+
+export const getListApiKeysUrl = () => {
+
+
+
+
+  return `/api/api-keys`
+}
+
+/**
+ * @summary List scoped API keys for the active workspace (masked metadata only)
+ */
+export const listApiKeys = async ( options?: Parameters<typeof customFetch>[1]): Promise<ApiKeyListResponse> => {
+
+  return customFetch<ApiKeyListResponse>(getListApiKeysUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListApiKeysQueryKey = () => {
+    return [
+    `/api/api-keys`
+    ] as const;
+    }
+
+
+export const getListApiKeysQueryOptions = <TData = Awaited<ReturnType<typeof listApiKeys>>, TError = ErrorType<Error>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listApiKeys>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListApiKeysQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listApiKeys>>> = ({ signal }) => listApiKeys({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listApiKeys>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListApiKeysQueryResult = NonNullable<Awaited<ReturnType<typeof listApiKeys>>>
+export type ListApiKeysQueryError = ErrorType<Error>
+
+
+/**
+ * @summary List scoped API keys for the active workspace (masked metadata only)
+ */
+
+export function useListApiKeys<TData = Awaited<ReturnType<typeof listApiKeys>>, TError = ErrorType<Error>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listApiKeys>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListApiKeysQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateApiKeyUrl = () => {
+
+
+
+
+  return `/api/api-keys`
+}
+
+/**
+ * @summary Create a scoped per-tenant API key (raw secret returned once)
+ */
+export const createApiKey = async (createApiKeyRequest: CreateApiKeyRequest, options?: Parameters<typeof customFetch>[1]): Promise<CreateApiKeyResult> => {
+
+  return customFetch<CreateApiKeyResult>(getCreateApiKeyUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(createApiKeyRequest)
+  }
+);}
+
+
+
+
+
+export const getCreateApiKeyMutationOptions = <TError = ErrorType<Error>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createApiKey>>, TError,{data: BodyType<CreateApiKeyRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createApiKey>>, TError,{data: BodyType<CreateApiKeyRequest>}, TContext> => {
+
+const mutationKey = ['createApiKey'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createApiKey>>, {data: BodyType<CreateApiKeyRequest>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createApiKey(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateApiKeyMutationResult = NonNullable<Awaited<ReturnType<typeof createApiKey>>>
+    export type CreateApiKeyMutationBody = BodyType<CreateApiKeyRequest>
+    export type CreateApiKeyMutationError = ErrorType<Error>
+
+    /**
+ * @summary Create a scoped per-tenant API key (raw secret returned once)
+ */
+export const useCreateApiKey = <TError = ErrorType<Error>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createApiKey>>, TError,{data: BodyType<CreateApiKeyRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createApiKey>>,
+        TError,
+        {data: BodyType<CreateApiKeyRequest>},
+        TContext
+      > => {
+      return useMutation(getCreateApiKeyMutationOptions(options));
+    }
+
+export const getRevokeApiKeyUrl = (keyId: string,) => {
+
+
+
+
+  return `/api/api-keys/${keyId}`
+}
+
+/**
+ * @summary Revoke a tenant API key
+ */
+export const revokeApiKey = async (keyId: string, options?: Parameters<typeof customFetch>[1]): Promise<RevokeApiKeyResult> => {
+
+  return customFetch<RevokeApiKeyResult>(getRevokeApiKeyUrl(keyId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getRevokeApiKeyMutationOptions = <TError = ErrorType<Error | NotFoundResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof revokeApiKey>>, TError,{keyId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof revokeApiKey>>, TError,{keyId: string}, TContext> => {
+
+const mutationKey = ['revokeApiKey'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof revokeApiKey>>, {keyId: string}> = (props) => {
+          const {keyId} = props ?? {};
+
+          return  revokeApiKey(keyId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RevokeApiKeyMutationResult = NonNullable<Awaited<ReturnType<typeof revokeApiKey>>>
+
+    export type RevokeApiKeyMutationError = ErrorType<Error | NotFoundResponse>
+
+    /**
+ * @summary Revoke a tenant API key
+ */
+export const useRevokeApiKey = <TError = ErrorType<Error | NotFoundResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof revokeApiKey>>, TError,{keyId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof revokeApiKey>>,
+        TError,
+        {keyId: string},
+        TContext
+      > => {
+      return useMutation(getRevokeApiKeyMutationOptions(options));
+    }
+
+export const getListProviderCredentialsUrl = () => {
+
+
+
+
+  return `/api/credentials`
+}
+
+/**
+ * @summary List encrypted provider credential status and masked hints (never plaintext secrets)
+ */
+export const listProviderCredentials = async ( options?: Parameters<typeof customFetch>[1]): Promise<ProviderCredentialListResponse> => {
+
+  return customFetch<ProviderCredentialListResponse>(getListProviderCredentialsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListProviderCredentialsQueryKey = () => {
+    return [
+    `/api/credentials`
+    ] as const;
+    }
+
+
+export const getListProviderCredentialsQueryOptions = <TData = Awaited<ReturnType<typeof listProviderCredentials>>, TError = ErrorType<Error>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listProviderCredentials>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListProviderCredentialsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listProviderCredentials>>> = ({ signal }) => listProviderCredentials({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listProviderCredentials>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListProviderCredentialsQueryResult = NonNullable<Awaited<ReturnType<typeof listProviderCredentials>>>
+export type ListProviderCredentialsQueryError = ErrorType<Error>
+
+
+/**
+ * @summary List encrypted provider credential status and masked hints (never plaintext secrets)
+ */
+
+export function useListProviderCredentials<TData = Awaited<ReturnType<typeof listProviderCredentials>>, TError = ErrorType<Error>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listProviderCredentials>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListProviderCredentialsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getUpsertProviderCredentialsUrl = (provider: CredentialProvider,) => {
+
+
+
+
+  return `/api/credentials/${provider}`
+}
+
+/**
+ * @summary Encrypt and store per-tenant provider credentials with AES-256-GCM
+ */
+export const upsertProviderCredentials = async (provider: CredentialProvider,
+    upsertProviderCredentialsRequest: UpsertProviderCredentialsRequest, options?: Parameters<typeof customFetch>[1]): Promise<UpsertProviderCredentialResult> => {
+
+  return customFetch<UpsertProviderCredentialResult>(getUpsertProviderCredentialsUrl(provider),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(upsertProviderCredentialsRequest)
+  }
+);}
+
+
+
+
+
+export const getUpsertProviderCredentialsMutationOptions = <TError = ErrorType<Error>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof upsertProviderCredentials>>, TError,{provider: CredentialProvider;data: BodyType<UpsertProviderCredentialsRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof upsertProviderCredentials>>, TError,{provider: CredentialProvider;data: BodyType<UpsertProviderCredentialsRequest>}, TContext> => {
+
+const mutationKey = ['upsertProviderCredentials'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof upsertProviderCredentials>>, {provider: CredentialProvider;data: BodyType<UpsertProviderCredentialsRequest>}> = (props) => {
+          const {provider,data} = props ?? {};
+
+          return  upsertProviderCredentials(provider,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpsertProviderCredentialsMutationResult = NonNullable<Awaited<ReturnType<typeof upsertProviderCredentials>>>
+    export type UpsertProviderCredentialsMutationBody = BodyType<UpsertProviderCredentialsRequest>
+    export type UpsertProviderCredentialsMutationError = ErrorType<Error>
+
+    /**
+ * @summary Encrypt and store per-tenant provider credentials with AES-256-GCM
+ */
+export const useUpsertProviderCredentials = <TError = ErrorType<Error>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof upsertProviderCredentials>>, TError,{provider: CredentialProvider;data: BodyType<UpsertProviderCredentialsRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof upsertProviderCredentials>>,
+        TError,
+        {provider: CredentialProvider;data: BodyType<UpsertProviderCredentialsRequest>},
+        TContext
+      > => {
+      return useMutation(getUpsertProviderCredentialsMutationOptions(options));
+    }
+
+export const getDeleteProviderCredentialsUrl = (provider: CredentialProvider,) => {
+
+
+
+
+  return `/api/credentials/${provider}`
+}
+
+/**
+ * @summary Remove stored encrypted credentials for a provider
+ */
+export const deleteProviderCredentials = async (provider: CredentialProvider, options?: Parameters<typeof customFetch>[1]): Promise<DeleteProviderCredentialResult> => {
+
+  return customFetch<DeleteProviderCredentialResult>(getDeleteProviderCredentialsUrl(provider),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteProviderCredentialsMutationOptions = <TError = ErrorType<Error | NotFoundResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteProviderCredentials>>, TError,{provider: CredentialProvider}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteProviderCredentials>>, TError,{provider: CredentialProvider}, TContext> => {
+
+const mutationKey = ['deleteProviderCredentials'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteProviderCredentials>>, {provider: CredentialProvider}> = (props) => {
+          const {provider} = props ?? {};
+
+          return  deleteProviderCredentials(provider,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteProviderCredentialsMutationResult = NonNullable<Awaited<ReturnType<typeof deleteProviderCredentials>>>
+
+    export type DeleteProviderCredentialsMutationError = ErrorType<Error | NotFoundResponse>
+
+    /**
+ * @summary Remove stored encrypted credentials for a provider
+ */
+export const useDeleteProviderCredentials = <TError = ErrorType<Error | NotFoundResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteProviderCredentials>>, TError,{provider: CredentialProvider}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteProviderCredentials>>,
+        TError,
+        {provider: CredentialProvider},
+        TContext
+      > => {
+      return useMutation(getDeleteProviderCredentialsMutationOptions(options));
+    }
+
+export const getGetAgentsUrl = () => {
+
+
+
+
+  return `/api/agents`
+}
+
+/**
+ * @summary List workspace agents
+ */
+export const getAgents = async ( options?: Parameters<typeof customFetch>[1]): Promise<AgentListResponse> => {
+
+  return customFetch<AgentListResponse>(getGetAgentsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAgentsQueryKey = () => {
+    return [
+    `/api/agents`
+    ] as const;
+    }
+
+
+export const getGetAgentsQueryOptions = <TData = Awaited<ReturnType<typeof getAgents>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAgents>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAgentsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAgents>>> = ({ signal }) => getAgents({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAgents>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAgentsQueryResult = NonNullable<Awaited<ReturnType<typeof getAgents>>>
+export type GetAgentsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List workspace agents
+ */
+
+export function useGetAgents<TData = Awaited<ReturnType<typeof getAgents>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAgents>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAgentsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getPostAgentsUrl = () => {
+
+
+
+
+  return `/api/agents`
+}
+
+/**
+ * @summary Create a new agent
+ */
+export const postAgents = async (createAgentRequest: CreateAgentRequest, options?: Parameters<typeof customFetch>[1]): Promise<CreateAgentResult> => {
+
+  return customFetch<CreateAgentResult>(getPostAgentsUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(createAgentRequest)
+  }
+);}
+
+
+
+
+
+export const getPostAgentsMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postAgents>>, TError,{data: BodyType<CreateAgentRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof postAgents>>, TError,{data: BodyType<CreateAgentRequest>}, TContext> => {
+
+const mutationKey = ['postAgents'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof postAgents>>, {data: BodyType<CreateAgentRequest>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  postAgents(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PostAgentsMutationResult = NonNullable<Awaited<ReturnType<typeof postAgents>>>
+    export type PostAgentsMutationBody = BodyType<CreateAgentRequest>
+    export type PostAgentsMutationError = ErrorType<void>
+
+    /**
+ * @summary Create a new agent
+ */
+export const usePostAgents = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postAgents>>, TError,{data: BodyType<CreateAgentRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof postAgents>>,
+        TError,
+        {data: BodyType<CreateAgentRequest>},
+        TContext
+      > => {
+      return useMutation(getPostAgentsMutationOptions(options));
+    }
+
+export const getGetAgentsRetellRemoteUrl = () => {
+
+
+
+
+  return `/api/agents/retell/remote`
+}
+
+/**
+ * @summary List agents in the connected Retell account
+ */
+export const getAgentsRetellRemote = async ( options?: Parameters<typeof customFetch>[1]): Promise<RetellRemoteAgentListResponse> => {
+
+  return customFetch<RetellRemoteAgentListResponse>(getGetAgentsRetellRemoteUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAgentsRetellRemoteQueryKey = () => {
+    return [
+    `/api/agents/retell/remote`
+    ] as const;
+    }
+
+
+export const getGetAgentsRetellRemoteQueryOptions = <TData = Awaited<ReturnType<typeof getAgentsRetellRemote>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAgentsRetellRemote>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAgentsRetellRemoteQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAgentsRetellRemote>>> = ({ signal }) => getAgentsRetellRemote({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAgentsRetellRemote>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAgentsRetellRemoteQueryResult = NonNullable<Awaited<ReturnType<typeof getAgentsRetellRemote>>>
+export type GetAgentsRetellRemoteQueryError = ErrorType<void>
+
+
+/**
+ * @summary List agents in the connected Retell account
+ */
+
+export function useGetAgentsRetellRemote<TData = Awaited<ReturnType<typeof getAgentsRetellRemote>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAgentsRetellRemote>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAgentsRetellRemoteQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetAgentsRetellVoicesUrl = () => {
+
+
+
+
+  return `/api/agents/retell/voices`
+}
+
+/**
+ * @summary List available Retell voices
+ */
+export const getAgentsRetellVoices = async ( options?: Parameters<typeof customFetch>[1]): Promise<RetellVoiceListResponse> => {
+
+  return customFetch<RetellVoiceListResponse>(getGetAgentsRetellVoicesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAgentsRetellVoicesQueryKey = () => {
+    return [
+    `/api/agents/retell/voices`
+    ] as const;
+    }
+
+
+export const getGetAgentsRetellVoicesQueryOptions = <TData = Awaited<ReturnType<typeof getAgentsRetellVoices>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAgentsRetellVoices>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAgentsRetellVoicesQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAgentsRetellVoices>>> = ({ signal }) => getAgentsRetellVoices({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAgentsRetellVoices>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAgentsRetellVoicesQueryResult = NonNullable<Awaited<ReturnType<typeof getAgentsRetellVoices>>>
+export type GetAgentsRetellVoicesQueryError = ErrorType<void>
+
+
+/**
+ * @summary List available Retell voices
+ */
+
+export function useGetAgentsRetellVoices<TData = Awaited<ReturnType<typeof getAgentsRetellVoices>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAgentsRetellVoices>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAgentsRetellVoicesQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetAgentsAgentIdUrl = (agentId: string,) => {
+
+
+
+
+  return `/api/agents/${agentId}`
+}
+
+/**
+ * @summary Get agent detail
+ */
+export const getAgentsAgentId = async (agentId: string, options?: Parameters<typeof customFetch>[1]): Promise<AgentDetailResponse> => {
+
+  return customFetch<AgentDetailResponse>(getGetAgentsAgentIdUrl(agentId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAgentsAgentIdQueryKey = (agentId: string,) => {
+    return [
+    `/api/agents/${agentId}`
+    ] as const;
+    }
+
+
+export const getGetAgentsAgentIdQueryOptions = <TData = Awaited<ReturnType<typeof getAgentsAgentId>>, TError = ErrorType<NotFoundResponse>>(agentId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAgentsAgentId>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAgentsAgentIdQueryKey(agentId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAgentsAgentId>>> = ({ signal }) => getAgentsAgentId(agentId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: agentId !== null && agentId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAgentsAgentId>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAgentsAgentIdQueryResult = NonNullable<Awaited<ReturnType<typeof getAgentsAgentId>>>
+export type GetAgentsAgentIdQueryError = ErrorType<NotFoundResponse>
+
+
+/**
+ * @summary Get agent detail
+ */
+
+export function useGetAgentsAgentId<TData = Awaited<ReturnType<typeof getAgentsAgentId>>, TError = ErrorType<NotFoundResponse>>(
+ agentId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAgentsAgentId>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAgentsAgentIdQueryOptions(agentId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getPatchAgentsAgentIdUrl = (agentId: string,) => {
+
+
+
+
+  return `/api/agents/${agentId}`
+}
+
+/**
+ * @summary Update agent
+ */
+export const patchAgentsAgentId = async (agentId: string,
+    updateAgentRequest: UpdateAgentRequest, options?: Parameters<typeof customFetch>[1]): Promise<UpdateAgentResult> => {
+
+  return customFetch<UpdateAgentResult>(getPatchAgentsAgentIdUrl(agentId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(updateAgentRequest)
+  }
+);}
+
+
+
+
+
+export const getPatchAgentsAgentIdMutationOptions = <TError = ErrorType<void | NotFoundResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof patchAgentsAgentId>>, TError,{agentId: string;data: BodyType<UpdateAgentRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof patchAgentsAgentId>>, TError,{agentId: string;data: BodyType<UpdateAgentRequest>}, TContext> => {
+
+const mutationKey = ['patchAgentsAgentId'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof patchAgentsAgentId>>, {agentId: string;data: BodyType<UpdateAgentRequest>}> = (props) => {
+          const {agentId,data} = props ?? {};
+
+          return  patchAgentsAgentId(agentId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PatchAgentsAgentIdMutationResult = NonNullable<Awaited<ReturnType<typeof patchAgentsAgentId>>>
+    export type PatchAgentsAgentIdMutationBody = BodyType<UpdateAgentRequest>
+    export type PatchAgentsAgentIdMutationError = ErrorType<void | NotFoundResponse>
+
+    /**
+ * @summary Update agent
+ */
+export const usePatchAgentsAgentId = <TError = ErrorType<void | NotFoundResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof patchAgentsAgentId>>, TError,{agentId: string;data: BodyType<UpdateAgentRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof patchAgentsAgentId>>,
+        TError,
+        {agentId: string;data: BodyType<UpdateAgentRequest>},
+        TContext
+      > => {
+      return useMutation(getPatchAgentsAgentIdMutationOptions(options));
+    }
+
+export const getDeleteAgentsAgentIdUrl = (agentId: string,) => {
+
+
+
+
+  return `/api/agents/${agentId}`
+}
+
+/**
+ * @summary Delete agent
+ */
+export const deleteAgentsAgentId = async (agentId: string, options?: Parameters<typeof customFetch>[1]): Promise<DeleteAgentResult> => {
+
+  return customFetch<DeleteAgentResult>(getDeleteAgentsAgentIdUrl(agentId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteAgentsAgentIdMutationOptions = <TError = ErrorType<void | NotFoundResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAgentsAgentId>>, TError,{agentId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteAgentsAgentId>>, TError,{agentId: string}, TContext> => {
+
+const mutationKey = ['deleteAgentsAgentId'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteAgentsAgentId>>, {agentId: string}> = (props) => {
+          const {agentId} = props ?? {};
+
+          return  deleteAgentsAgentId(agentId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteAgentsAgentIdMutationResult = NonNullable<Awaited<ReturnType<typeof deleteAgentsAgentId>>>
+
+    export type DeleteAgentsAgentIdMutationError = ErrorType<void | NotFoundResponse>
+
+    /**
+ * @summary Delete agent
+ */
+export const useDeleteAgentsAgentId = <TError = ErrorType<void | NotFoundResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAgentsAgentId>>, TError,{agentId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteAgentsAgentId>>,
+        TError,
+        {agentId: string},
+        TContext
+      > => {
+      return useMutation(getDeleteAgentsAgentIdMutationOptions(options));
+    }
+
+export const getPostAgentsAgentIdPublishUrl = (agentId: string,) => {
+
+
+
+
+  return `/api/agents/${agentId}/publish`
+}
+
+/**
+ * @summary Publish agent to Retell and snapshot version
+ */
+export const postAgentsAgentIdPublish = async (agentId: string, options?: Parameters<typeof customFetch>[1]): Promise<PublishAgentResult> => {
+
+  return customFetch<PublishAgentResult>(getPostAgentsAgentIdPublishUrl(agentId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getPostAgentsAgentIdPublishMutationOptions = <TError = ErrorType<void | NotFoundResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postAgentsAgentIdPublish>>, TError,{agentId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof postAgentsAgentIdPublish>>, TError,{agentId: string}, TContext> => {
+
+const mutationKey = ['postAgentsAgentIdPublish'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof postAgentsAgentIdPublish>>, {agentId: string}> = (props) => {
+          const {agentId} = props ?? {};
+
+          return  postAgentsAgentIdPublish(agentId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PostAgentsAgentIdPublishMutationResult = NonNullable<Awaited<ReturnType<typeof postAgentsAgentIdPublish>>>
+
+    export type PostAgentsAgentIdPublishMutationError = ErrorType<void | NotFoundResponse>
+
+    /**
+ * @summary Publish agent to Retell and snapshot version
+ */
+export const usePostAgentsAgentIdPublish = <TError = ErrorType<void | NotFoundResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postAgentsAgentIdPublish>>, TError,{agentId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof postAgentsAgentIdPublish>>,
+        TError,
+        {agentId: string},
+        TContext
+      > => {
+      return useMutation(getPostAgentsAgentIdPublishMutationOptions(options));
+    }
+
+export const getGetAgentsAgentIdVersionsUrl = (agentId: string,) => {
+
+
+
+
+  return `/api/agents/${agentId}/versions`
+}
+
+/**
+ * @summary List published versions of an agent
+ */
+export const getAgentsAgentIdVersions = async (agentId: string, options?: Parameters<typeof customFetch>[1]): Promise<AgentVersionListResponse> => {
+
+  return customFetch<AgentVersionListResponse>(getGetAgentsAgentIdVersionsUrl(agentId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAgentsAgentIdVersionsQueryKey = (agentId: string,) => {
+    return [
+    `/api/agents/${agentId}/versions`
+    ] as const;
+    }
+
+
+export const getGetAgentsAgentIdVersionsQueryOptions = <TData = Awaited<ReturnType<typeof getAgentsAgentIdVersions>>, TError = ErrorType<NotFoundResponse>>(agentId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAgentsAgentIdVersions>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAgentsAgentIdVersionsQueryKey(agentId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAgentsAgentIdVersions>>> = ({ signal }) => getAgentsAgentIdVersions(agentId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: agentId !== null && agentId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAgentsAgentIdVersions>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAgentsAgentIdVersionsQueryResult = NonNullable<Awaited<ReturnType<typeof getAgentsAgentIdVersions>>>
+export type GetAgentsAgentIdVersionsQueryError = ErrorType<NotFoundResponse>
+
+
+/**
+ * @summary List published versions of an agent
+ */
+
+export function useGetAgentsAgentIdVersions<TData = Awaited<ReturnType<typeof getAgentsAgentIdVersions>>, TError = ErrorType<NotFoundResponse>>(
+ agentId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAgentsAgentIdVersions>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAgentsAgentIdVersionsQueryOptions(agentId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getPostAgentsAgentIdRetellLinkUrl = (agentId: string,) => {
+
+
+
+
+  return `/api/agents/${agentId}/retell-link`
+}
+
+/**
+ * @summary Link an existing Retell agent to this workspace agent
+ */
+export const postAgentsAgentIdRetellLink = async (agentId: string,
+    retellLinkRequest: RetellLinkRequest, options?: Parameters<typeof customFetch>[1]): Promise<RetellLinkResult> => {
+
+  return customFetch<RetellLinkResult>(getPostAgentsAgentIdRetellLinkUrl(agentId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(retellLinkRequest)
+  }
+);}
+
+
+
+
+
+export const getPostAgentsAgentIdRetellLinkMutationOptions = <TError = ErrorType<void | NotFoundResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postAgentsAgentIdRetellLink>>, TError,{agentId: string;data: BodyType<RetellLinkRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof postAgentsAgentIdRetellLink>>, TError,{agentId: string;data: BodyType<RetellLinkRequest>}, TContext> => {
+
+const mutationKey = ['postAgentsAgentIdRetellLink'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof postAgentsAgentIdRetellLink>>, {agentId: string;data: BodyType<RetellLinkRequest>}> = (props) => {
+          const {agentId,data} = props ?? {};
+
+          return  postAgentsAgentIdRetellLink(agentId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PostAgentsAgentIdRetellLinkMutationResult = NonNullable<Awaited<ReturnType<typeof postAgentsAgentIdRetellLink>>>
+    export type PostAgentsAgentIdRetellLinkMutationBody = BodyType<RetellLinkRequest>
+    export type PostAgentsAgentIdRetellLinkMutationError = ErrorType<void | NotFoundResponse>
+
+    /**
+ * @summary Link an existing Retell agent to this workspace agent
+ */
+export const usePostAgentsAgentIdRetellLink = <TError = ErrorType<void | NotFoundResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postAgentsAgentIdRetellLink>>, TError,{agentId: string;data: BodyType<RetellLinkRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof postAgentsAgentIdRetellLink>>,
+        TError,
+        {agentId: string;data: BodyType<RetellLinkRequest>},
+        TContext
+      > => {
+      return useMutation(getPostAgentsAgentIdRetellLinkMutationOptions(options));
+    }
+
+export const getPostAgentsAgentIdTestWebCallUrl = (agentId: string,) => {
+
+
+
+
+  return `/api/agents/${agentId}/test-web-call`
+}
+
+/**
+ * @summary Create a Retell web-call sandbox test
+ */
+export const postAgentsAgentIdTestWebCall = async (agentId: string, options?: Parameters<typeof customFetch>[1]): Promise<WebCallResult> => {
+
+  return customFetch<WebCallResult>(getPostAgentsAgentIdTestWebCallUrl(agentId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getPostAgentsAgentIdTestWebCallMutationOptions = <TError = ErrorType<NotFoundResponse | void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postAgentsAgentIdTestWebCall>>, TError,{agentId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof postAgentsAgentIdTestWebCall>>, TError,{agentId: string}, TContext> => {
+
+const mutationKey = ['postAgentsAgentIdTestWebCall'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof postAgentsAgentIdTestWebCall>>, {agentId: string}> = (props) => {
+          const {agentId} = props ?? {};
+
+          return  postAgentsAgentIdTestWebCall(agentId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PostAgentsAgentIdTestWebCallMutationResult = NonNullable<Awaited<ReturnType<typeof postAgentsAgentIdTestWebCall>>>
+
+    export type PostAgentsAgentIdTestWebCallMutationError = ErrorType<NotFoundResponse | void>
+
+    /**
+ * @summary Create a Retell web-call sandbox test
+ */
+export const usePostAgentsAgentIdTestWebCall = <TError = ErrorType<NotFoundResponse | void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postAgentsAgentIdTestWebCall>>, TError,{agentId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof postAgentsAgentIdTestWebCall>>,
+        TError,
+        {agentId: string},
+        TContext
+      > => {
+      return useMutation(getPostAgentsAgentIdTestWebCallMutationOptions(options));
+    }
+
+export const getGetPhoneNumbersUrl = () => {
+
+
+
+
+  return `/api/phone-numbers`
+}
+
+/**
+ * @summary List workspace phone numbers
+ */
+export const getPhoneNumbers = async ( options?: Parameters<typeof customFetch>[1]): Promise<PhoneNumberListResponse> => {
+
+  return customFetch<PhoneNumberListResponse>(getGetPhoneNumbersUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetPhoneNumbersQueryKey = () => {
+    return [
+    `/api/phone-numbers`
+    ] as const;
+    }
+
+
+export const getGetPhoneNumbersQueryOptions = <TData = Awaited<ReturnType<typeof getPhoneNumbers>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPhoneNumbers>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPhoneNumbersQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPhoneNumbers>>> = ({ signal }) => getPhoneNumbers({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPhoneNumbers>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetPhoneNumbersQueryResult = NonNullable<Awaited<ReturnType<typeof getPhoneNumbers>>>
+export type GetPhoneNumbersQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List workspace phone numbers
+ */
+
+export function useGetPhoneNumbers<TData = Awaited<ReturnType<typeof getPhoneNumbers>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPhoneNumbers>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetPhoneNumbersQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getPostPhoneNumbersSyncUrl = () => {
+
+
+
+
+  return `/api/phone-numbers/sync`
+}
+
+/**
+ * @summary Sync phone numbers from Retell into this workspace
+ */
+export const postPhoneNumbersSync = async ( options?: Parameters<typeof customFetch>[1]): Promise<PhoneNumberSyncResult> => {
+
+  return customFetch<PhoneNumberSyncResult>(getPostPhoneNumbersSyncUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getPostPhoneNumbersSyncMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postPhoneNumbersSync>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof postPhoneNumbersSync>>, TError,void, TContext> => {
+
+const mutationKey = ['postPhoneNumbersSync'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof postPhoneNumbersSync>>, void> = () => {
+
+
+          return  postPhoneNumbersSync(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PostPhoneNumbersSyncMutationResult = NonNullable<Awaited<ReturnType<typeof postPhoneNumbersSync>>>
+
+    export type PostPhoneNumbersSyncMutationError = ErrorType<void>
+
+    /**
+ * @summary Sync phone numbers from Retell into this workspace
+ */
+export const usePostPhoneNumbersSync = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postPhoneNumbersSync>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof postPhoneNumbersSync>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getPostPhoneNumbersSyncMutationOptions(options));
+    }
+
+export const getPatchPhoneNumbersPhoneNumberIdUrl = (phoneNumberId: string,) => {
+
+
+
+
+  return `/api/phone-numbers/${phoneNumberId}`
+}
+
+/**
+ * @summary Update phone number nickname or agent binding
+ */
+export const patchPhoneNumbersPhoneNumberId = async (phoneNumberId: string,
+    updatePhoneNumberRequest: UpdatePhoneNumberRequest, options?: Parameters<typeof customFetch>[1]): Promise<UpdatePhoneNumberResult> => {
+
+  return customFetch<UpdatePhoneNumberResult>(getPatchPhoneNumbersPhoneNumberIdUrl(phoneNumberId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(updatePhoneNumberRequest)
+  }
+);}
+
+
+
+
+
+export const getPatchPhoneNumbersPhoneNumberIdMutationOptions = <TError = ErrorType<void | NotFoundResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof patchPhoneNumbersPhoneNumberId>>, TError,{phoneNumberId: string;data: BodyType<UpdatePhoneNumberRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof patchPhoneNumbersPhoneNumberId>>, TError,{phoneNumberId: string;data: BodyType<UpdatePhoneNumberRequest>}, TContext> => {
+
+const mutationKey = ['patchPhoneNumbersPhoneNumberId'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof patchPhoneNumbersPhoneNumberId>>, {phoneNumberId: string;data: BodyType<UpdatePhoneNumberRequest>}> = (props) => {
+          const {phoneNumberId,data} = props ?? {};
+
+          return  patchPhoneNumbersPhoneNumberId(phoneNumberId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PatchPhoneNumbersPhoneNumberIdMutationResult = NonNullable<Awaited<ReturnType<typeof patchPhoneNumbersPhoneNumberId>>>
+    export type PatchPhoneNumbersPhoneNumberIdMutationBody = BodyType<UpdatePhoneNumberRequest>
+    export type PatchPhoneNumbersPhoneNumberIdMutationError = ErrorType<void | NotFoundResponse>
+
+    /**
+ * @summary Update phone number nickname or agent binding
+ */
+export const usePatchPhoneNumbersPhoneNumberId = <TError = ErrorType<void | NotFoundResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof patchPhoneNumbersPhoneNumberId>>, TError,{phoneNumberId: string;data: BodyType<UpdatePhoneNumberRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof patchPhoneNumbersPhoneNumberId>>,
+        TError,
+        {phoneNumberId: string;data: BodyType<UpdatePhoneNumberRequest>},
+        TContext
+      > => {
+      return useMutation(getPatchPhoneNumbersPhoneNumberIdMutationOptions(options));
+    }
 

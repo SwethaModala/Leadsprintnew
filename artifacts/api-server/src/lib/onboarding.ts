@@ -41,6 +41,7 @@ function nonEmpty(value: string | null | undefined): boolean {
 
 export function buildOnboardingChecklist(
   business: BusinessRow | undefined,
+  overrides?: { retellConfigured?: boolean; calcomConfigured?: boolean },
 ): OnboardingChecklist {
   const market = business?.market === "IN" ? "IN" : "US";
 
@@ -111,16 +112,16 @@ export function buildOnboardingChecklist(
     {
       key: "provider_retell",
       label: "Retell voice provider configured",
-      complete: hasRetellConfigForMarket(market),
+      complete: overrides?.retellConfigured ?? hasRetellConfigForMarket(market),
       severity: "required",
-      detail: "RETELL_API_KEY, RETELL_AGENT_ID and a from-number for this market must be set on the deployment.",
+      detail: "RETELL_API_KEY, RETELL_AGENT_ID and a from-number for this market (or encrypted tenant credentials) must be configured.",
     },
     {
       key: "provider_calcom",
       label: "Cal.com calendar provider configured",
-      complete: hasCalConfig(),
+      complete: overrides?.calcomConfigured ?? hasCalConfig(),
       severity: "required",
-      detail: "CALCOM_API_KEY and CALCOM_EVENT_TYPE_ID must be set; booking is never simulated in a live pilot.",
+      detail: "CALCOM_API_KEY and CALCOM_EVENT_TYPE_ID (or encrypted tenant credentials) must be set; booking is never simulated in a live pilot.",
     },
     {
       key: "retell_agent",
@@ -155,8 +156,9 @@ export function buildOnboardingChecklist(
  */
 export function liveCallingBlockedReason(
   business: BusinessRow | undefined,
+  overrides?: { retellConfigured?: boolean; calcomConfigured?: boolean },
 ): string | null {
-  const checklist = buildOnboardingChecklist(business);
+  const checklist = buildOnboardingChecklist(business, overrides);
   if (checklist.ready_for_live_calls) return null;
   const labels = checklist.items
     .filter((item) => checklist.missing_required.includes(item.key))
