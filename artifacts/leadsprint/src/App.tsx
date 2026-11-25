@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import {
   getGetAuthMeQueryKey,
+  setAuthTokenGetter,
   useGetAuthMe,
 } from "@workspace/api-client-react";
 import {
@@ -711,6 +712,32 @@ function ClerkQueryClientCacheInvalidator() {
   return null;
 }
 
+function ClerkTokenBridge() {
+  const { getToken, isSignedIn } = useAuth();
+  const getTokenRef = useRef(getToken);
+  getTokenRef.current = getToken;
+
+  useEffect(() => {
+    if (isSignedIn) {
+      setAuthTokenGetter(async () => {
+        try {
+          return await getTokenRef.current();
+        } catch {
+          return null;
+        }
+      });
+    } else {
+      setAuthTokenGetter(null);
+    }
+
+    return () => {
+      setAuthTokenGetter(null);
+    };
+  }, [isSignedIn]);
+
+  return null;
+}
+
 const clerkAppearance = {
   theme: shadcn,
   cssLayerName: "clerk",
@@ -798,6 +825,7 @@ function ClerkApp() {
       routerPush={(to) => setLocation(stripBase(to))}
       routerReplace={(to) => setLocation(stripBase(to), { replace: true })}
     >
+      <ClerkTokenBridge />
       <QueryClientProvider client={queryClient}>
         <ClerkQueryClientCacheInvalidator />
         <Router />

@@ -139,6 +139,72 @@ export async function requireAuth(
     return;
   }
 
+  if (user.businessId) {
+    const existingMemberships = await db
+      .select({ id: membershipsTable.id })
+      .from(membershipsTable)
+      .where(eq(membershipsTable.userId, user.id))
+      .limit(1);
+
+    if (existingMemberships.length === 0) {
+      // User has zero organization memberships.
+      // Verify business exists and independent ownership before self-healing.
+      const [business] = await db
+        .select({ id: businessesTable.id })
+        .from(businessesTable)
+        .where(eq(businessesTable.id, user.businessId))
+        .limit(1);
+
+      if (!business) {
+        res.status(403).json({
+          error: "Organization does not exist. Please contact support or your organization administrator.",
+        });
+        return;
+      }
+
+      // Check whether user's legacy role is owner
+      if (user.role !== "owner") {
+        res.status(403).json({
+          error: "Organization membership could not be verified. An organization administrator must invite you to this workspace.",
+        });
+        return;
+      }
+
+      // Verify no other owner already exists for this business (prevent cross-tenant hijacking)
+      const [existingOwner] = await db
+        .select({ userId: membershipsTable.userId })
+        .from(membershipsTable)
+        .where(
+          and(
+            eq(membershipsTable.businessId, user.businessId),
+            eq(membershipsTable.role, "owner"),
+          ),
+        )
+        .limit(1);
+
+      const isDedicatedUserBusiness = user.businessId === `business_${user.id}`;
+      const isSoleLegacyOwner = !existingOwner || existingOwner.userId === user.id;
+
+      if (!isDedicatedUserBusiness && !isSoleLegacyOwner) {
+        res.status(403).json({
+          error: "Organization membership could not be verified. An organization administrator must invite you to this workspace.",
+        });
+        return;
+      }
+
+      // Independently verified: safe to create owner membership
+      await db
+        .insert(membershipsTable)
+        .values({
+          id: `mem_${user.id}_${user.businessId}`,
+          userId: user.id,
+          businessId: user.businessId,
+          role: "owner",
+        })
+        .onConflictDoNothing();
+    }
+  }
+
   const resolvedOrg = await resolveActiveOrganization(
     db,
     user.id,
