@@ -1,5 +1,6 @@
 import {
   boolean,
+  index,
   integer,
   jsonb,
   numeric,
@@ -14,6 +15,7 @@ import { z } from "zod/v4";
 export const businessesTable = pgTable("businesses", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
+  slug: text("slug").unique(),
   market: text("market").notNull().default("US"),
   timezone: text("timezone").notNull().default("America/New_York"),
   phoneNumber: text("phone_number").notNull(),
@@ -213,6 +215,50 @@ export const providerEventsTable = pgTable("provider_events", {
   providerEventUnique: uniqueIndex("provider_events_provider_external_unique").on(table.businessId, table.provider, table.externalEventId),
 }));
 
+export const membershipsTable = pgTable("memberships", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
+  businessId: text("business_id").notNull().references(() => businessesTable.id, { onDelete: "cascade" }),
+  role: text("role").notNull().default("member"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
+}, (table) => ({
+  userBusinessUnique: uniqueIndex("memberships_user_business_unique").on(table.userId, table.businessId),
+  businessRoleIdx: index("memberships_business_role_idx").on(table.businessId, table.role),
+}));
+
+export const invitationsTable = pgTable("invitations", {
+  id: text("id").primaryKey(),
+  businessId: text("business_id").notNull().references(() => businessesTable.id, { onDelete: "cascade" }),
+  invitedByUserId: text("invited_by_user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
+  email: text("email").notNull(),
+  role: text("role").notNull().default("member"),
+  tokenHash: text("token_hash").notNull().unique(),
+  status: text("status").notNull().default("pending"),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
+}, (table) => ({
+  businessCreatedIdx: index("invitations_business_created_idx").on(table.businessId, table.createdAt),
+  businessEmailStatusIdx: index("invitations_business_email_status_idx").on(table.businessId, table.email, table.status),
+  businessStatusExpiresIdx: index("invitations_business_status_expires_idx").on(table.businessId, table.status, table.expiresAt),
+}));
+
+export const auditLogsTable = pgTable("audit_logs", {
+  id: text("id").primaryKey(),
+  businessId: text("business_id").references(() => businessesTable.id, { onDelete: "set null" }),
+  userId: text("user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  entity: text("entity").notNull(),
+  entityId: text("entity_id"),
+  action: text("action").notNull(),
+  details: jsonb("details").$type<Record<string, unknown>>(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => ({
+  businessCreatedIdx: index("audit_logs_business_created_idx").on(table.businessId, table.createdAt),
+}));
+
 export const insertBusinessSchema = createInsertSchema(businessesTable);
 export const insertUserSchema = createInsertSchema(usersTable);
 export const insertContactSchema = createInsertSchema(contactsTable);
@@ -224,6 +270,9 @@ export const insertUsageSchema = createInsertSchema(usageTable);
 export const insertSuppressionSchema = createInsertSchema(suppressionsTable);
 export const insertWorkflowJobSchema = createInsertSchema(workflowJobsTable);
 export const insertProviderEventSchema = createInsertSchema(providerEventsTable);
+export const insertMembershipSchema = createInsertSchema(membershipsTable);
+export const insertInvitationSchema = createInsertSchema(invitationsTable);
+export const insertAuditLogSchema = createInsertSchema(auditLogsTable);
 
 export type Business = z.infer<typeof insertBusinessSchema>;
 export type User = z.infer<typeof insertUserSchema>;
@@ -231,3 +280,6 @@ export type Contact = z.infer<typeof insertContactSchema>;
 export type Lead = z.infer<typeof insertLeadSchema>;
 export type Call = z.infer<typeof insertCallSchema>;
 export type Appointment = z.infer<typeof insertAppointmentSchema>;
+export type Membership = z.infer<typeof insertMembershipSchema>;
+export type Invitation = z.infer<typeof insertInvitationSchema>;
+export type AuditLog = z.infer<typeof insertAuditLogSchema>;

@@ -6,6 +6,8 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { Business } from './business';
+import type { OrganizationSummary } from './organizationSummary';
+import type { OrgRole } from './orgRole';
 import type { User } from './user';
 import type { VerticalProfile } from './verticalProfile';
 
@@ -13,4 +15,6 @@ export interface AuthSession {
   user: User;
   business: Business;
   profile: VerticalProfile;
+  active_role?: OrgRole;
+  organizations?: OrganizationSummary[];
 }

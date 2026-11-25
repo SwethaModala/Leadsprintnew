@@ -1,13 +1,28 @@
 import type { NextFunction, Request, Response } from "express";
 import { getAuth } from "@clerk/express";
 import { and, eq } from "drizzle-orm";
-import { db, businessesTable, usersTable, usageTable } from "@workspace/db";
+import { db as defaultDb, businessesTable, membershipsTable, usersTable, usageTable } from "@workspace/db";
+import { resolveActiveOrganization } from "../lib/orgContext";
+import type { OrgRole } from "./rbac";
+
+type Database = typeof defaultDb;
+let db: Database = defaultDb;
+
+/** Test seam for swapping the database in auth middleware tests. */
+export function __setAuthDb(next: Database): void {
+  db = next;
+}
+
+export function __resetAuthDb(): void {
+  db = defaultDb;
+}
 
 declare global {
   namespace Express {
     interface Request {
       leadSprintUserId?: string;
       leadSprintBusinessId?: string;
+      leadSprintRole?: OrgRole;
     }
   }
 }
@@ -90,6 +105,15 @@ export async function requireAuth(
         })
         .onConflictDoNothing()
         .returning();
+      await db
+        .insert(membershipsTable)
+        .values({
+          id: `mem_${userId}_${businessId}`,
+          userId,
+          businessId,
+          role: "owner",
+        })
+        .onConflictDoNothing();
       const now = new Date();
       const usageRowId = `usage_${businessId}_${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
       await db
@@ -115,7 +139,20 @@ export async function requireAuth(
     return;
   }
 
+  const resolvedOrg = await resolveActiveOrganization(
+    db,
+    user.id,
+    user.businessId,
+    req,
+    res,
+  );
+  if (!resolvedOrg.ok) {
+    res.status(resolvedOrg.status).json({ error: resolvedOrg.error });
+    return;
+  }
+
   req.leadSprintUserId = user.id;
-  req.leadSprintBusinessId = user.businessId;
+  req.leadSprintBusinessId = resolvedOrg.businessId;
+  req.leadSprintRole = resolvedOrg.role;
   next();
 }

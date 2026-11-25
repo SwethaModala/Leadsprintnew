@@ -9,11 +9,20 @@ import {
   callsTable,
   contactsTable,
   leadsTable,
+  membershipsTable,
   providerEventsTable,
   usageTable,
   usersTable,
   workflowJobsTable,
 } from "@workspace/db";
+import {
+  ADMIN_ROLES,
+  normalizeOrgRole,
+  OPERATIONS_ROLES,
+  READ_ROLES,
+  requireRole,
+} from "../middlewares/rbac";
+import { listUserOrganizations } from "../lib/orgContext";
 import {
   GetActivityQueryParams,
   GetActivityResponse,
@@ -180,6 +189,15 @@ async function ensureSeedData(): Promise<void> {
   if (!user) {
     await db.insert(usersTable).values({ id: USER_ID, businessId: BUSINESS_ID, name: "Maya Patel", email: "maya@northstarrealty.example", role: "owner" }).onConflictDoNothing();
   }
+  await db
+    .insert(membershipsTable)
+    .values({
+      id: `mem_${USER_ID}_${BUSINESS_ID}`,
+      userId: USER_ID,
+      businessId: BUSINESS_ID,
+      role: "owner",
+    })
+    .onConflictDoNothing();
 
   const existingLeads = await db.select({ id: leadsTable.id }).from(leadsTable).where(eq(leadsTable.businessId, BUSINESS_ID)).limit(1);
   if (existingLeads.length > 0) return;
@@ -355,7 +373,7 @@ async function getCallDto(row: typeof callsTable.$inferSelect) {
   };
 }
 
-router.get("/auth/me", async (_req, res): Promise<void> => {
+router.get("/auth/me", requireRole(...READ_ROLES), async (_req, res): Promise<void> => {
   const req = _req;
   const businessId = scopedBusinessId(req);
   if (demoSeedEnabled() || businessId === BUSINESS_ID) {
@@ -377,16 +395,20 @@ router.get("/auth/me", async (_req, res): Promise<void> => {
     }
   }
   if (!user || !business) { res.status(503).json({ error: "Operator setup is not ready" }); return; }
+  const activeRole = req.leadSprintRole ?? normalizeOrgRole(user.role);
+  const organizations = await listUserOrganizations(db, user.id, business.id);
   res.json(GetAuthMeResponse.parse({
-    user: { id: user.id, name: user.name, email: user.email, role: user.role },
+    user: { id: user.id, name: user.name, email: user.email, role: activeRole },
     business: { id: business.id, name: business.name, market: business.market, timezone: business.timezone, phone_number: business.phoneNumber, transfer_number: business.transferNumber, recording_disclosure: business.recordingDisclosure, ai_disclosure: business.aiDisclosure, quiet_hours: business.quietHours, max_call_attempts: business.maxCallAttempts, suppression_enabled: business.suppressionEnabled, vertical: getProfile(business.vertical).id },
     profile: toApiProfile(getProfile(business.vertical)),
+    active_role: activeRole,
+    organizations,
   }));
 });
 
 router.post("/auth/logout", async (_req, res): Promise<void> => { res.sendStatus(204); });
 
-router.get("/leads", async (req, res): Promise<void> => {
+router.get("/leads", requireRole(...READ_ROLES), async (req, res): Promise<void> => {
   const BUSINESS_ID = scopedBusinessId(req);
   const query = GetLeadsQueryParams.safeParse(req.query);
   if (!query.success) { res.status(400).json({ error: query.error.message }); return; }
@@ -401,7 +423,7 @@ router.get("/leads", async (req, res): Promise<void> => {
   res.json(GetLeadsResponse.parse(result.filter(Boolean)));
 });
 
-router.get("/leads/:id", async (req, res): Promise<void> => {
+router.get("/leads/:id", requireRole(...READ_ROLES), async (req, res): Promise<void> => {
   const BUSINESS_ID = scopedBusinessId(req);
   const params = GetLeadParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
@@ -410,7 +432,7 @@ router.get("/leads/:id", async (req, res): Promise<void> => {
   res.json(GetLeadResponse.parse(lead));
 });
 
-router.patch("/leads/:id", async (req, res): Promise<void> => {
+router.patch("/leads/:id", requireRole(...OPERATIONS_ROLES), async (req, res): Promise<void> => {
   const BUSINESS_ID = scopedBusinessId(req);
   const params = UpdateLeadParams.safeParse(req.params);
   const body = UpdateLeadBody.safeParse(req.body);
@@ -425,7 +447,7 @@ router.patch("/leads/:id", async (req, res): Promise<void> => {
   res.json(UpdateLeadResponse.parse(lead));
 });
 
-router.post("/leads/:id/suppress", async (req, res): Promise<void> => {
+router.post("/leads/:id/suppress", requireRole(...OPERATIONS_ROLES), async (req, res): Promise<void> => {
   const BUSINESS_ID = scopedBusinessId(req);
   const params = SuppressLeadParams.safeParse(req.params);
   const body = SuppressLeadBody.safeParse(req.body ?? {});
@@ -441,7 +463,7 @@ router.post("/leads/:id/suppress", async (req, res): Promise<void> => {
   res.json(SuppressLeadResponse.parse(lead));
 });
 
-router.post("/leads/import", async (req, res): Promise<void> => {
+router.post("/leads/import", requireRole(...OPERATIONS_ROLES), async (req, res): Promise<void> => {
   const BUSINESS_ID = scopedBusinessId(req);
   const body = ImportLeadsBody.safeParse(req.body);
   if (!body.success) { res.status(400).json({ error: body.error.message }); return; }
@@ -480,7 +502,7 @@ router.post("/leads/import", async (req, res): Promise<void> => {
   res.json(ImportLeadsResponse.parse({ imported, skipped, leads: result.filter(Boolean) }));
 });
 
-router.get("/calls", async (req, res): Promise<void> => {
+router.get("/calls", requireRole(...READ_ROLES), async (req, res): Promise<void> => {
   const BUSINESS_ID = scopedBusinessId(req);
   const query = GetCallsQueryParams.safeParse(req.query);
   if (!query.success) { res.status(400).json({ error: query.error.message }); return; }
@@ -488,7 +510,7 @@ router.get("/calls", async (req, res): Promise<void> => {
   res.json(GetCallsResponse.parse(await Promise.all(rows.map(getCallDto))));
 });
 
-router.get("/calls/:id", async (req, res): Promise<void> => {
+router.get("/calls/:id", requireRole(...READ_ROLES), async (req, res): Promise<void> => {
   const BUSINESS_ID = scopedBusinessId(req);
   const params = GetCallParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
@@ -497,7 +519,7 @@ router.get("/calls/:id", async (req, res): Promise<void> => {
   res.json(GetCallResponse.parse(await getCallDto(row)));
 });
 
-router.post("/calls/start", async (req, res): Promise<void> => {
+router.post("/calls/start", requireRole(...OPERATIONS_ROLES), async (req, res): Promise<void> => {
   const BUSINESS_ID = scopedBusinessId(req);
   const body = StartCallBody.safeParse(req.body);
   if (!body.success) { res.status(400).json({ error: body.error.message }); return; }
@@ -571,7 +593,7 @@ router.post("/calls/start", async (req, res): Promise<void> => {
  * Re-queues under a stable key so repeated clicks cannot multiply calls. The
  * policy gate runs again on dispatch, so a retry can still be blocked.
  */
-router.post("/calls/:id/retry", async (req, res): Promise<void> => {
+router.post("/calls/:id/retry", requireRole(...OPERATIONS_ROLES), async (req, res): Promise<void> => {
   const BUSINESS_ID = scopedBusinessId(req);
   const callId = typeof req.params.id === "string" ? req.params.id : "";
   const [row] = await db.select().from(callsTable).where(and(eq(callsTable.id, callId), eq(callsTable.businessId, BUSINESS_ID)));
@@ -619,14 +641,14 @@ router.post("/calls/:id/retry", async (req, res): Promise<void> => {
   res.status(201).json(StartCallResponse.parse(await getCallDto(current)));
 });
 
-router.get("/appointments", async (_req, res): Promise<void> => {
+router.get("/appointments", requireRole(...READ_ROLES), async (_req, res): Promise<void> => {
   const req = _req;
   const BUSINESS_ID = scopedBusinessId(req);
   const rows = await db.select().from(appointmentsTable).where(and(eq(appointmentsTable.businessId, BUSINESS_ID), eq(appointmentsTable.status, "confirmed"))).orderBy(appointmentsTable.startTime);
   res.json(GetAppointmentsResponse.parse(await Promise.all(rows.map((row) => getAppointmentDto(row, BUSINESS_ID)))));
 });
 
-router.post("/appointments/availability", async (req, res): Promise<void> => {
+router.post("/appointments/availability", requireRole(...OPERATIONS_ROLES), async (req, res): Promise<void> => {
   const BUSINESS_ID = scopedBusinessId(req);
   const body = GetAvailabilityBody.safeParse(req.body);
   if (!body.success) { res.status(400).json({ error: body.error.message }); return; }
@@ -643,7 +665,7 @@ router.post("/appointments/availability", async (req, res): Promise<void> => {
   }
 });
 
-router.post("/appointments/book", async (req, res): Promise<void> => {
+router.post("/appointments/book", requireRole(...OPERATIONS_ROLES), async (req, res): Promise<void> => {
   const BUSINESS_ID = scopedBusinessId(req);
   const body = BookAppointmentBody.safeParse(req.body);
   if (!body.success) { res.status(400).json({ error: body.error.message }); return; }
@@ -671,13 +693,13 @@ router.post("/appointments/book", async (req, res): Promise<void> => {
  * dedicated setup panel; `ready_for_live_calls: false` means POST
  * /calls/start and the automatic intake path both refuse to dial.
  */
-router.get("/onboarding/checklist", async (req, res): Promise<void> => {
+router.get("/onboarding/checklist", requireRole(...READ_ROLES), async (req, res): Promise<void> => {
   const BUSINESS_ID = scopedBusinessId(req);
   const business = await getBusiness(BUSINESS_ID);
   res.json(buildOnboardingChecklist(business));
 });
 
-router.get("/business-settings", async (_req, res): Promise<void> => {
+router.get("/business-settings", requireRole(...READ_ROLES), async (_req, res): Promise<void> => {
   const req = _req;
   const BUSINESS_ID = scopedBusinessId(req);
   const business = await getBusiness(BUSINESS_ID);
@@ -690,7 +712,7 @@ router.get("/business-settings", async (_req, res): Promise<void> => {
   }));
 });
 
-router.patch("/business-settings", async (req, res): Promise<void> => {
+router.patch("/business-settings", requireRole(...ADMIN_ROLES), async (req, res): Promise<void> => {
   const BUSINESS_ID = scopedBusinessId(req);
   const body = UpdateBusinessSettingsBody.safeParse(req.body);
   if (!body.success) { res.status(400).json({ error: body.error.message }); return; }
@@ -726,7 +748,7 @@ router.patch("/business-settings", async (req, res): Promise<void> => {
   }));
 });
 
-router.get("/activity", async (req, res): Promise<void> => {
+router.get("/activity", requireRole(...READ_ROLES), async (req, res): Promise<void> => {
   const BUSINESS_ID = scopedBusinessId(req);
   const query = GetActivityQueryParams.safeParse(req.query);
   if (!query.success) { res.status(400).json({ error: query.error.message }); return; }
@@ -734,7 +756,7 @@ router.get("/activity", async (req, res): Promise<void> => {
   res.json(GetActivityResponse.parse(rows.map((row) => ({ id: row.id, type: row.type, title: row.title, detail: row.detail, created_at: row.createdAt.toISOString() }))));
 });
 
-router.get("/today", async (_req, res): Promise<void> => {
+router.get("/today", requireRole(...READ_ROLES), async (_req, res): Promise<void> => {
   const req = _req;
   const BUSINESS_ID = scopedBusinessId(req);
   const [business] = await db.select().from(businessesTable).where(eq(businessesTable.id, BUSINESS_ID));
@@ -827,7 +849,7 @@ router.get("/today", async (_req, res): Promise<void> => {
   }));
 });
 
-router.get("/reports/weekly", async (_req, res): Promise<void> => {
+router.get("/reports/weekly", requireRole(...READ_ROLES), async (_req, res): Promise<void> => {
   const req = _req;
   const BUSINESS_ID = scopedBusinessId(req);
   const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
@@ -881,7 +903,7 @@ router.get("/reports/weekly", async (_req, res): Promise<void> => {
   }));
 });
 
-router.get("/usage", async (_req, res): Promise<void> => {
+router.get("/usage", requireRole(...READ_ROLES), async (_req, res): Promise<void> => {
   const req = _req;
   const BUSINESS_ID = scopedBusinessId(req);
   // Monthly period row, created at zero on first use — the label comes

@@ -17,6 +17,7 @@ function buildApp(): Express {
   app.use((req, _res, next) => {
     req.leadSprintUserId = DEMO_USER_ID;
     req.leadSprintBusinessId = DEMO_BUSINESS_ID;
+    req.leadSprintRole = "owner";
     next();
   });
   app.use("/api", leadsprintRouter);

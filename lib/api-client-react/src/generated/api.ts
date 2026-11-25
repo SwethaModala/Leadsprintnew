@@ -20,29 +20,45 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  AcceptInvitationRequest,
+  AcceptInvitationResponse,
   Activity,
   Appointment,
   AppointmentInput,
+  AuditLogsResponse,
   AuthSession,
   AvailabilityInput,
   BusinessSettings,
   BusinessSettingsUpdate,
   Call,
+  CreateOrganizationRequest,
+  Error,
   GetActivityParams,
+  GetAuditLogsParams,
   GetCallsParams,
   GetLeadsParams,
   HealthStatus,
   ImportResult,
+  InviteTeamMemberRequest,
+  InviteTeamMemberResult,
   Lead,
   LeadImportInput,
   LeadUpdate,
   NotFoundResponse,
   OnboardingChecklist,
+  OrganizationSwitchResponse,
+  OrganizationsResponse,
   ReadinessStatus,
+  RemoveTeamMemberResult,
   Slot,
   StartCallInput,
   SuppressionInput,
+  SwitchOrganizationRequest,
+  TeamInvitationResponse,
+  TeamMemberResponse,
+  TeamRosterResponse,
   Today,
+  UpdateTeamMemberRoleRequest,
   Usage,
   WeeklyReport
 } from './api.schemas';
@@ -2099,4 +2115,740 @@ export const useReceiveCalcomEvent = <TError = ErrorType<void>,
       > => {
       return useMutation(getReceiveCalcomEventMutationOptions(options));
     }
+
+export const getListOrganizationsUrl = () => {
+
+
+
+
+  return `/api/orgs`
+}
+
+/**
+ * @summary List organizations the authenticated user belongs to
+ */
+export const listOrganizations = async ( options?: Parameters<typeof customFetch>[1]): Promise<OrganizationsResponse> => {
+
+  return customFetch<OrganizationsResponse>(getListOrganizationsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListOrganizationsQueryKey = () => {
+    return [
+    `/api/orgs`
+    ] as const;
+    }
+
+
+export const getListOrganizationsQueryOptions = <TData = Awaited<ReturnType<typeof listOrganizations>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listOrganizations>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListOrganizationsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listOrganizations>>> = ({ signal }) => listOrganizations({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listOrganizations>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListOrganizationsQueryResult = NonNullable<Awaited<ReturnType<typeof listOrganizations>>>
+export type ListOrganizationsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List organizations the authenticated user belongs to
+ */
+
+export function useListOrganizations<TData = Awaited<ReturnType<typeof listOrganizations>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listOrganizations>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListOrganizationsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateOrganizationUrl = () => {
+
+
+
+
+  return `/api/orgs`
+}
+
+/**
+ * @summary Create a new organization workspace and become its owner
+ */
+export const createOrganization = async (createOrganizationRequest: CreateOrganizationRequest, options?: Parameters<typeof customFetch>[1]): Promise<OrganizationSwitchResponse> => {
+
+  return customFetch<OrganizationSwitchResponse>(getCreateOrganizationUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(createOrganizationRequest)
+  }
+);}
+
+
+
+
+
+export const getCreateOrganizationMutationOptions = <TError = ErrorType<Error>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createOrganization>>, TError,{data: BodyType<CreateOrganizationRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createOrganization>>, TError,{data: BodyType<CreateOrganizationRequest>}, TContext> => {
+
+const mutationKey = ['createOrganization'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createOrganization>>, {data: BodyType<CreateOrganizationRequest>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createOrganization(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateOrganizationMutationResult = NonNullable<Awaited<ReturnType<typeof createOrganization>>>
+    export type CreateOrganizationMutationBody = BodyType<CreateOrganizationRequest>
+    export type CreateOrganizationMutationError = ErrorType<Error>
+
+    /**
+ * @summary Create a new organization workspace and become its owner
+ */
+export const useCreateOrganization = <TError = ErrorType<Error>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createOrganization>>, TError,{data: BodyType<CreateOrganizationRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createOrganization>>,
+        TError,
+        {data: BodyType<CreateOrganizationRequest>},
+        TContext
+      > => {
+      return useMutation(getCreateOrganizationMutationOptions(options));
+    }
+
+export const getSwitchOrganizationUrl = () => {
+
+
+
+
+  return `/api/orgs/switch`
+}
+
+/**
+ * @summary Switch active organization for the current session
+ */
+export const switchOrganization = async (switchOrganizationRequest: SwitchOrganizationRequest, options?: Parameters<typeof customFetch>[1]): Promise<OrganizationSwitchResponse> => {
+
+  return customFetch<OrganizationSwitchResponse>(getSwitchOrganizationUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(switchOrganizationRequest)
+  }
+);}
+
+
+
+
+
+export const getSwitchOrganizationMutationOptions = <TError = ErrorType<Error>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof switchOrganization>>, TError,{data: BodyType<SwitchOrganizationRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof switchOrganization>>, TError,{data: BodyType<SwitchOrganizationRequest>}, TContext> => {
+
+const mutationKey = ['switchOrganization'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof switchOrganization>>, {data: BodyType<SwitchOrganizationRequest>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  switchOrganization(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SwitchOrganizationMutationResult = NonNullable<Awaited<ReturnType<typeof switchOrganization>>>
+    export type SwitchOrganizationMutationBody = BodyType<SwitchOrganizationRequest>
+    export type SwitchOrganizationMutationError = ErrorType<Error>
+
+    /**
+ * @summary Switch active organization for the current session
+ */
+export const useSwitchOrganization = <TError = ErrorType<Error>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof switchOrganization>>, TError,{data: BodyType<SwitchOrganizationRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof switchOrganization>>,
+        TError,
+        {data: BodyType<SwitchOrganizationRequest>},
+        TContext
+      > => {
+      return useMutation(getSwitchOrganizationMutationOptions(options));
+    }
+
+export const getGetTeamUrl = () => {
+
+
+
+
+  return `/api/team`
+}
+
+/**
+ * @summary Get active organization team members, invitations, and caller permissions
+ */
+export const getTeam = async ( options?: Parameters<typeof customFetch>[1]): Promise<TeamRosterResponse> => {
+
+  return customFetch<TeamRosterResponse>(getGetTeamUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetTeamQueryKey = () => {
+    return [
+    `/api/team`
+    ] as const;
+    }
+
+
+export const getGetTeamQueryOptions = <TData = Awaited<ReturnType<typeof getTeam>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTeam>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetTeamQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTeam>>> = ({ signal }) => getTeam({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getTeam>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetTeamQueryResult = NonNullable<Awaited<ReturnType<typeof getTeam>>>
+export type GetTeamQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get active organization team members, invitations, and caller permissions
+ */
+
+export function useGetTeam<TData = Awaited<ReturnType<typeof getTeam>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTeam>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetTeamQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getInviteTeamMemberUrl = () => {
+
+
+
+
+  return `/api/team/invitations`
+}
+
+/**
+ * @summary Create and send a team invitation for the active organization
+ */
+export const inviteTeamMember = async (inviteTeamMemberRequest: InviteTeamMemberRequest, options?: Parameters<typeof customFetch>[1]): Promise<InviteTeamMemberResult> => {
+
+  return customFetch<InviteTeamMemberResult>(getInviteTeamMemberUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(inviteTeamMemberRequest)
+  }
+);}
+
+
+
+
+
+export const getInviteTeamMemberMutationOptions = <TError = ErrorType<Error>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof inviteTeamMember>>, TError,{data: BodyType<InviteTeamMemberRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof inviteTeamMember>>, TError,{data: BodyType<InviteTeamMemberRequest>}, TContext> => {
+
+const mutationKey = ['inviteTeamMember'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof inviteTeamMember>>, {data: BodyType<InviteTeamMemberRequest>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  inviteTeamMember(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type InviteTeamMemberMutationResult = NonNullable<Awaited<ReturnType<typeof inviteTeamMember>>>
+    export type InviteTeamMemberMutationBody = BodyType<InviteTeamMemberRequest>
+    export type InviteTeamMemberMutationError = ErrorType<Error>
+
+    /**
+ * @summary Create and send a team invitation for the active organization
+ */
+export const useInviteTeamMember = <TError = ErrorType<Error>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof inviteTeamMember>>, TError,{data: BodyType<InviteTeamMemberRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof inviteTeamMember>>,
+        TError,
+        {data: BodyType<InviteTeamMemberRequest>},
+        TContext
+      > => {
+      return useMutation(getInviteTeamMemberMutationOptions(options));
+    }
+
+export const getRevokeTeamInvitationUrl = (invitationId: string,) => {
+
+
+
+
+  return `/api/team/invitations/${invitationId}`
+}
+
+/**
+ * @summary Revoke a pending team invitation
+ */
+export const revokeTeamInvitation = async (invitationId: string, options?: Parameters<typeof customFetch>[1]): Promise<TeamInvitationResponse> => {
+
+  return customFetch<TeamInvitationResponse>(getRevokeTeamInvitationUrl(invitationId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getRevokeTeamInvitationMutationOptions = <TError = ErrorType<Error | NotFoundResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof revokeTeamInvitation>>, TError,{invitationId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof revokeTeamInvitation>>, TError,{invitationId: string}, TContext> => {
+
+const mutationKey = ['revokeTeamInvitation'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof revokeTeamInvitation>>, {invitationId: string}> = (props) => {
+          const {invitationId} = props ?? {};
+
+          return  revokeTeamInvitation(invitationId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RevokeTeamInvitationMutationResult = NonNullable<Awaited<ReturnType<typeof revokeTeamInvitation>>>
+
+    export type RevokeTeamInvitationMutationError = ErrorType<Error | NotFoundResponse>
+
+    /**
+ * @summary Revoke a pending team invitation
+ */
+export const useRevokeTeamInvitation = <TError = ErrorType<Error | NotFoundResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof revokeTeamInvitation>>, TError,{invitationId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof revokeTeamInvitation>>,
+        TError,
+        {invitationId: string},
+        TContext
+      > => {
+      return useMutation(getRevokeTeamInvitationMutationOptions(options));
+    }
+
+export const getAcceptTeamInvitationUrl = () => {
+
+
+
+
+  return `/api/team/invitations/accept`
+}
+
+/**
+ * @summary Accept a team invitation as the authenticated user
+ */
+export const acceptTeamInvitation = async (acceptInvitationRequest: AcceptInvitationRequest, options?: Parameters<typeof customFetch>[1]): Promise<AcceptInvitationResponse> => {
+
+  return customFetch<AcceptInvitationResponse>(getAcceptTeamInvitationUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(acceptInvitationRequest)
+  }
+);}
+
+
+
+
+
+export const getAcceptTeamInvitationMutationOptions = <TError = ErrorType<Error>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof acceptTeamInvitation>>, TError,{data: BodyType<AcceptInvitationRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof acceptTeamInvitation>>, TError,{data: BodyType<AcceptInvitationRequest>}, TContext> => {
+
+const mutationKey = ['acceptTeamInvitation'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof acceptTeamInvitation>>, {data: BodyType<AcceptInvitationRequest>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  acceptTeamInvitation(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AcceptTeamInvitationMutationResult = NonNullable<Awaited<ReturnType<typeof acceptTeamInvitation>>>
+    export type AcceptTeamInvitationMutationBody = BodyType<AcceptInvitationRequest>
+    export type AcceptTeamInvitationMutationError = ErrorType<Error>
+
+    /**
+ * @summary Accept a team invitation as the authenticated user
+ */
+export const useAcceptTeamInvitation = <TError = ErrorType<Error>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof acceptTeamInvitation>>, TError,{data: BodyType<AcceptInvitationRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof acceptTeamInvitation>>,
+        TError,
+        {data: BodyType<AcceptInvitationRequest>},
+        TContext
+      > => {
+      return useMutation(getAcceptTeamInvitationMutationOptions(options));
+    }
+
+export const getUpdateTeamMemberRoleUrl = (membershipId: string,) => {
+
+
+
+
+  return `/api/team/members/${membershipId}`
+}
+
+/**
+ * @summary Change the role of a team member
+ */
+export const updateTeamMemberRole = async (membershipId: string,
+    updateTeamMemberRoleRequest: UpdateTeamMemberRoleRequest, options?: Parameters<typeof customFetch>[1]): Promise<TeamMemberResponse> => {
+
+  return customFetch<TeamMemberResponse>(getUpdateTeamMemberRoleUrl(membershipId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(updateTeamMemberRoleRequest)
+  }
+);}
+
+
+
+
+
+export const getUpdateTeamMemberRoleMutationOptions = <TError = ErrorType<Error | NotFoundResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateTeamMemberRole>>, TError,{membershipId: string;data: BodyType<UpdateTeamMemberRoleRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateTeamMemberRole>>, TError,{membershipId: string;data: BodyType<UpdateTeamMemberRoleRequest>}, TContext> => {
+
+const mutationKey = ['updateTeamMemberRole'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateTeamMemberRole>>, {membershipId: string;data: BodyType<UpdateTeamMemberRoleRequest>}> = (props) => {
+          const {membershipId,data} = props ?? {};
+
+          return  updateTeamMemberRole(membershipId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateTeamMemberRoleMutationResult = NonNullable<Awaited<ReturnType<typeof updateTeamMemberRole>>>
+    export type UpdateTeamMemberRoleMutationBody = BodyType<UpdateTeamMemberRoleRequest>
+    export type UpdateTeamMemberRoleMutationError = ErrorType<Error | NotFoundResponse>
+
+    /**
+ * @summary Change the role of a team member
+ */
+export const useUpdateTeamMemberRole = <TError = ErrorType<Error | NotFoundResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateTeamMemberRole>>, TError,{membershipId: string;data: BodyType<UpdateTeamMemberRoleRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateTeamMemberRole>>,
+        TError,
+        {membershipId: string;data: BodyType<UpdateTeamMemberRoleRequest>},
+        TContext
+      > => {
+      return useMutation(getUpdateTeamMemberRoleMutationOptions(options));
+    }
+
+export const getRemoveTeamMemberUrl = (membershipId: string,) => {
+
+
+
+
+  return `/api/team/members/${membershipId}`
+}
+
+/**
+ * @summary Remove a member from the active organization
+ */
+export const removeTeamMember = async (membershipId: string, options?: Parameters<typeof customFetch>[1]): Promise<RemoveTeamMemberResult> => {
+
+  return customFetch<RemoveTeamMemberResult>(getRemoveTeamMemberUrl(membershipId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getRemoveTeamMemberMutationOptions = <TError = ErrorType<Error | NotFoundResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof removeTeamMember>>, TError,{membershipId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof removeTeamMember>>, TError,{membershipId: string}, TContext> => {
+
+const mutationKey = ['removeTeamMember'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof removeTeamMember>>, {membershipId: string}> = (props) => {
+          const {membershipId} = props ?? {};
+
+          return  removeTeamMember(membershipId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RemoveTeamMemberMutationResult = NonNullable<Awaited<ReturnType<typeof removeTeamMember>>>
+
+    export type RemoveTeamMemberMutationError = ErrorType<Error | NotFoundResponse>
+
+    /**
+ * @summary Remove a member from the active organization
+ */
+export const useRemoveTeamMember = <TError = ErrorType<Error | NotFoundResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof removeTeamMember>>, TError,{membershipId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof removeTeamMember>>,
+        TError,
+        {membershipId: string},
+        TContext
+      > => {
+      return useMutation(getRemoveTeamMemberMutationOptions(options));
+    }
+
+export const getGetAuditLogsUrl = (params?: GetAuditLogsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/audit-logs?${stringifiedParams}` : `/api/audit-logs`
+}
+
+/**
+ * @summary Get recent RBAC and workspace audit log entries
+ */
+export const getAuditLogs = async (params?: GetAuditLogsParams, options?: Parameters<typeof customFetch>[1]): Promise<AuditLogsResponse> => {
+
+  return customFetch<AuditLogsResponse>(getGetAuditLogsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAuditLogsQueryKey = (params?: GetAuditLogsParams,) => {
+    return [
+    `/api/audit-logs`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetAuditLogsQueryOptions = <TData = Awaited<ReturnType<typeof getAuditLogs>>, TError = ErrorType<Error>>(params?: GetAuditLogsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAuditLogs>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAuditLogsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAuditLogs>>> = ({ signal }) => getAuditLogs(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAuditLogs>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAuditLogsQueryResult = NonNullable<Awaited<ReturnType<typeof getAuditLogs>>>
+export type GetAuditLogsQueryError = ErrorType<Error>
+
+
+/**
+ * @summary Get recent RBAC and workspace audit log entries
+ */
+
+export function useGetAuditLogs<TData = Awaited<ReturnType<typeof getAuditLogs>>, TError = ErrorType<Error>>(
+ params?: GetAuditLogsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAuditLogs>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAuditLogsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 

@@ -133,3 +133,68 @@ export async function sendWeeklyReportEmail(input: WeeklyReportEmailInput): Prom
   await transporter().sendMail({ from, to: input.to, subject, text, html });
   return true;
 }
+
+export interface TeamInvitationEmailInput {
+  to: string;
+  organizationName: string;
+  inviterName: string;
+  role: string;
+  acceptUrl: string;
+  expiresAt: Date;
+}
+
+/**
+ * Sends a team invitation email via SMTP or Resend if configured.
+ * Returns `false` if no email provider is configured so callers can fail
+ * closed in production or record a safe dev/demo delivery state.
+ */
+export async function sendTeamInvitationEmail(input: TeamInvitationEmailInput): Promise<boolean> {
+  const subject = `You're invited to join ${input.organizationName} on LeadSprint`;
+  const expiresLabel = input.expiresAt.toUTCString();
+  const text = [
+    `${input.inviterName} invited you to join ${input.organizationName} on LeadSprint as ${input.role}.`,
+    "",
+    `Accept your invitation: ${input.acceptUrl}`,
+    "",
+    `This invitation expires on ${expiresLabel}.`,
+  ].join("\n");
+  const html = [
+    `<div style="font-family: -apple-system, Arial, sans-serif; line-height: 1.5; color: #111827;">`,
+    `<h2 style="margin: 0 0 12px;">Join ${escapeHtml(input.organizationName)} on LeadSprint</h2>`,
+    `<p>${escapeHtml(input.inviterName)} invited you to join <strong>${escapeHtml(input.organizationName)}</strong> as <strong>${escapeHtml(input.role)}</strong>.</p>`,
+    `<p style="margin: 20px 0;"><a href="${escapeHtml(input.acceptUrl)}" style="display: inline-block; background: #0f172a; color: #ffffff; text-decoration: none; padding: 10px 18px; border-radius: 8px; font-weight: 600;">Accept Invitation</a></p>`,
+    `<p style="font-size: 13px; color: #4b5563;">This invitation expires on ${escapeHtml(expiresLabel)}. If you weren't expecting this invitation, you can ignore this email.</p>`,
+    `</div>`,
+  ].join("");
+
+  if (smtpConfigured()) {
+    const from = env("SMTP_FROM") ?? env("SMTP_USER")!;
+    await transporter().sendMail({ from, to: input.to, subject, text, html });
+    return true;
+  }
+
+  const resendKey = env("RESEND_API_KEY");
+  const resendFrom = env("RESEND_FROM_EMAIL") ?? env("SMTP_FROM");
+  if (resendKey && resendFrom) {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${resendKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: resendFrom,
+        to: [input.to],
+        subject,
+        text,
+        html,
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(`Resend invitation email failed with status ${response.status}`);
+    }
+    return true;
+  }
+
+  return false;
+}

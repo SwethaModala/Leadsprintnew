@@ -70,6 +70,7 @@ function buildApp(): Express {
   app.use((req, _res, next) => {
     req.leadSprintUserId = "user_pilot";
     req.leadSprintBusinessId = BUSINESS_ID;
+    req.leadSprintRole = "owner";
     next();
   });
   app.use("/api", leadsprintRouter);

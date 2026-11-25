@@ -18,6 +18,7 @@ const DDL = `
 CREATE TABLE businesses (
   id text PRIMARY KEY,
   name text NOT NULL,
+  slug text UNIQUE,
   market text NOT NULL DEFAULT 'US',
   timezone text NOT NULL DEFAULT 'America/New_York',
   phone_number text NOT NULL,
@@ -171,6 +172,44 @@ CREATE TABLE provider_events (
   processed_at timestamptz
 );
 CREATE UNIQUE INDEX provider_events_provider_external_unique ON provider_events (business_id, provider, external_event_id);
+CREATE TABLE memberships (
+  id text PRIMARY KEY,
+  user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  business_id text NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  role text NOT NULL DEFAULT 'member',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX memberships_user_business_unique ON memberships (user_id, business_id);
+CREATE INDEX memberships_business_role_idx ON memberships (business_id, role);
+CREATE TABLE invitations (
+  id text PRIMARY KEY,
+  business_id text NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  invited_by_user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  email text NOT NULL,
+  role text NOT NULL DEFAULT 'member',
+  token_hash text NOT NULL UNIQUE,
+  status text NOT NULL DEFAULT 'pending',
+  expires_at timestamptz NOT NULL,
+  accepted_at timestamptz,
+  revoked_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX invitations_business_created_idx ON invitations (business_id, created_at);
+CREATE INDEX invitations_business_email_status_idx ON invitations (business_id, email, status);
+CREATE INDEX invitations_business_status_expires_idx ON invitations (business_id, status, expires_at);
+CREATE TABLE audit_logs (
+  id text PRIMARY KEY,
+  business_id text REFERENCES businesses(id) ON DELETE SET NULL,
+  user_id text REFERENCES users(id) ON DELETE SET NULL,
+  entity text NOT NULL,
+  entity_id text,
+  action text NOT NULL,
+  details jsonb,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX audit_logs_business_created_idx ON audit_logs (business_id, created_at);
 `;
 
 export async function createTestDb(): Promise<TestDb> {

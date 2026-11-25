@@ -7,6 +7,7 @@ import {
   contactsTable,
   type db as defaultDb,
   leadsTable,
+  membershipsTable,
   usageTable,
   usersTable,
 } from "@workspace/db";
@@ -66,6 +67,16 @@ export async function seedHomeServicesDemo(db: Database, ids: { businessId: stri
       .values({ id: userId, businessId, name: "Dana Ortiz", email: "dana@frostline.example", role: "owner" })
       .onConflictDoNothing();
   }
+
+  await db
+    .insert(membershipsTable)
+    .values({
+      id: `mem_${userId}_${businessId}`,
+      userId,
+      businessId,
+      role: "owner",
+    })
+    .onConflictDoNothing();
 
   const existing = await db.select({ id: leadsTable.id }).from(leadsTable).where(eq(leadsTable.businessId, businessId)).limit(1);
   if (existing.length > 0) return;

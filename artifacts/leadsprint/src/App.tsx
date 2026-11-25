@@ -36,8 +36,11 @@ import {
 } from "wouter";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { Button, Skeleton, initials } from "@/components/common";
+import { OrgSwitcher } from "@/components/OrgSwitcher";
 import { resolveAuthMode } from "@/lib/authMode";
 import NotFound from "@/pages/not-found";
+import TeamsPage from "@/pages/teams";
+import AcceptInvitationPage, { PENDING_INVITE_STORAGE_KEY } from "@/pages/accept-invitation";
 import TodayPage from "@/pages/today";
 import LeadsPage from "@/pages/leads";
 import CallsPage from "@/pages/calls";
@@ -77,6 +80,7 @@ const navGroups: NavGroup[] = [
     label: "Manage",
     items: [
       { href: "/workspace/contacts", label: "Contacts", icon: UsersRound },
+      { href: "/workspace/teams", label: "Teams", icon: ShieldCheck },
     ],
   },
   {
@@ -111,6 +115,12 @@ const pageMeta: Record<
     title: "Contacts",
     description:
       "Verified contact records, recipient timezones, and TCPA consent compliance.",
+  },
+  "/workspace/teams": {
+    eyebrow: "Organization",
+    title: "Team & Access",
+    description:
+      "Manage workspace members, role-based access control, invitations, and audit logs.",
   },
   "/workspace/business-settings": {
     eyebrow: "Console",
@@ -223,6 +233,8 @@ function Shell({ children, session }: { children: ReactNode; session: any }) {
             <X size={18} />
           </button>
         </div>
+
+        <OrgSwitcher />
 
         <nav
           className="mt-6 min-h-0 flex-1 space-y-2 overflow-y-auto px-1"
@@ -602,7 +614,40 @@ function DemoHomeRoute() {
 
 const HomeRoute = DEMO_AUTH ? DemoHomeRoute : ClerkHomeRoute;
 
+function AcceptInvitationRoute() {
+  useEffect(() => {
+    const hashToken = new URLSearchParams(window.location.hash.replace(/^#/, "")).get("token")?.trim();
+    if (hashToken) {
+      try {
+        sessionStorage.setItem(PENDING_INVITE_STORAGE_KEY, hashToken);
+      } catch {
+        // Ignore storage errors.
+      }
+    }
+  }, []);
+
+  return (
+    <ErrorBoundary>
+      <AuthGate>
+        <AcceptInvitationPage />
+      </AuthGate>
+    </ErrorBoundary>
+  );
+}
+
 function WorkspaceRoute() {
+  const hasPendingInvite = (() => {
+    try {
+      return Boolean(sessionStorage.getItem(PENDING_INVITE_STORAGE_KEY));
+    } catch {
+      return false;
+    }
+  })();
+
+  if (hasPendingInvite) {
+    return <Redirect to="/accept-invitation" />;
+  }
+
   return (
     <ErrorBoundary>
       <AuthGate>
@@ -613,6 +658,7 @@ function WorkspaceRoute() {
           <Route path="/workspace/leads" component={LeadsPage} />
           <Route path="/workspace/appointments" component={AppointmentsPage} />
           <Route path="/workspace/business-settings" component={SettingsPage} />
+          <Route path="/workspace/teams" component={TeamsPage} />
           <Route path="/workspace/reports" component={ReportsPage} />
           <Route component={NotFound} />
         </Switch>
@@ -696,6 +742,7 @@ function Router() {
     <Switch>
       <Route path="/sign-in/*?" component={SignInPage} />
       <Route path="/sign-up/*?" component={SignUpPage} />
+      <Route path="/accept-invitation" component={AcceptInvitationRoute} />
       <Route path="/" component={HomeRoute} />
       <Route component={WorkspaceRoute} />
     </Switch>

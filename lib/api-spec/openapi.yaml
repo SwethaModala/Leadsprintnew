@@ -447,6 +447,275 @@ paths:
       responses:
         "202": { description: Event accepted or already processed }
         "401": { description: Invalid signature }
+  /orgs:
+    get:
+      operationId: listOrganizations
+      tags: [orgs]
+      summary: List organizations the authenticated user belongs to
+      responses:
+        "200":
+          description: Organizations for the current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganizationsResponse"
+    post:
+      operationId: createOrganization
+      tags: [orgs]
+      summary: Create a new organization workspace and become its owner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateOrganizationRequest"
+      responses:
+        "201":
+          description: Created organization
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganizationSwitchResponse"
+        "400":
+          description: Invalid organization request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /orgs/switch:
+    post:
+      operationId: switchOrganization
+      tags: [orgs]
+      summary: Switch active organization for the current session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SwitchOrganizationRequest"
+      responses:
+        "200":
+          description: Active organization updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganizationSwitchResponse"
+        "403":
+          description: User is not a member of the requested organization
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /team:
+    get:
+      operationId: getTeam
+      tags: [team]
+      summary: Get active organization team members, invitations, and caller permissions
+      responses:
+        "200":
+          description: Team roster
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamRosterResponse"
+  /team/invitations:
+    post:
+      operationId: inviteTeamMember
+      tags: [team]
+      summary: Create and send a team invitation for the active organization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InviteTeamMemberRequest"
+      responses:
+        "201":
+          description: Invitation created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InviteTeamMemberResult"
+        "400":
+          description: Invalid invitation request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Insufficient role permissions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: User already belongs to this organization
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: Invitation rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /team/invitations/{invitationId}:
+    delete:
+      operationId: revokeTeamInvitation
+      tags: [team]
+      summary: Revoke a pending team invitation
+      parameters:
+        - name: invitationId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Invitation revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamInvitationResponse"
+        "403":
+          description: Insufficient role permissions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /team/invitations/accept:
+    post:
+      operationId: acceptTeamInvitation
+      tags: [team]
+      summary: Accept a team invitation as the authenticated user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcceptInvitationRequest"
+      responses:
+        "200":
+          description: Invitation accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcceptInvitationResponse"
+        "400":
+          description: Invalid or expired invitation token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Invitation email does not match authenticated user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: User is already a member or invitation already used
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /team/members/{membershipId}:
+    patch:
+      operationId: updateTeamMemberRole
+      tags: [team]
+      summary: Change the role of a team member
+      parameters:
+        - name: membershipId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTeamMemberRoleRequest"
+      responses:
+        "200":
+          description: Member role updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamMemberResponse"
+        "400":
+          description: Invalid role update
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Insufficient role permissions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: removeTeamMember
+      tags: [team]
+      summary: Remove a member from the active organization
+      parameters:
+        - name: membershipId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Member removed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RemoveTeamMemberResult"
+        "400":
+          description: Cannot remove self or last owner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Insufficient role permissions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /audit-logs:
+    get:
+      operationId: getAuditLogs
+      tags: [team]
+      summary: Get recent RBAC and workspace audit log entries
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: Audit log entries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditLogsResponse"
+        "403":
+          description: Insufficient role permissions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 components:
   parameters:
     Id:
@@ -493,13 +762,26 @@ components:
         error:
           type: string
       required: [error]
+    OrgRole:
+      type: string
+      enum: [owner, admin, manager, member]
+    OrganizationSummary:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        slug: { type: ["string", "null"] }
+        vertical: { $ref: "#/components/schemas/VerticalId" }
+        role: { $ref: "#/components/schemas/OrgRole" }
+        is_active: { type: boolean }
+      required: [id, name, slug, vertical, role, is_active]
     User:
       type: object
       properties:
         id: { type: string }
         name: { type: string }
         email: { type: string }
-        role: { type: string, enum: [owner, admin, operator] }
+        role: { type: string, enum: [owner, admin, manager, member, operator] }
       required: [id, name, email, role]
     Business:
       type: object
@@ -552,6 +834,10 @@ components:
         user: { $ref: "#/components/schemas/User" }
         business: { $ref: "#/components/schemas/Business" }
         profile: { $ref: "#/components/schemas/VerticalProfile" }
+        active_role: { $ref: "#/components/schemas/OrgRole" }
+        organizations:
+          type: array
+          items: { $ref: "#/components/schemas/OrganizationSummary" }
       required: [user, business, profile]
     Score:
       type: string
@@ -824,4 +1110,153 @@ components:
         booking_count: { type: number }
         estimated_cost: { type: number }
       required: [period_label, voice_minutes, included_minutes, sms_count, booking_count, estimated_cost]
+    OrganizationsResponse:
+      type: object
+      properties:
+        organizations:
+          type: array
+          items: { $ref: "#/components/schemas/OrganizationSummary" }
+        active_business_id: { type: string }
+        active_role: { $ref: "#/components/schemas/OrgRole" }
+      required: [organizations, active_business_id, active_role]
+    CreateOrganizationRequest:
+      type: object
+      properties:
+        name: { type: string, minLength: 2, maxLength: 100 }
+        vertical: { $ref: "#/components/schemas/VerticalId" }
+        market: { type: string, enum: [US, IN] }
+        timezone: { type: string }
+      required: [name]
+    SwitchOrganizationRequest:
+      type: object
+      properties:
+        business_id: { type: string, minLength: 1 }
+      required: [business_id]
+    OrganizationSwitchResponse:
+      type: object
+      properties:
+        active_business_id: { type: string }
+        active_role: { $ref: "#/components/schemas/OrgRole" }
+        organization: { $ref: "#/components/schemas/OrganizationSummary" }
+      required: [active_business_id, active_role, organization]
+    TeamPermissions:
+      type: object
+      properties:
+        can_invite: { type: boolean }
+        allowed_invite_roles:
+          type: array
+          items: { $ref: "#/components/schemas/OrgRole" }
+        can_manage_roles: { type: boolean }
+        can_remove_members: { type: boolean }
+        can_edit_settings: { type: boolean }
+      required: [can_invite, allowed_invite_roles, can_manage_roles, can_remove_members, can_edit_settings]
+    TeamMember:
+      type: object
+      properties:
+        membership_id: { type: string }
+        user_id: { type: string }
+        name: { type: string }
+        email: { type: string }
+        role: { $ref: "#/components/schemas/OrgRole" }
+        joined_at: { type: string, format: date-time }
+        last_login_at: { type: ["string", "null"], format: date-time }
+      required: [membership_id, user_id, name, email, role, joined_at, last_login_at]
+    TeamInvitation:
+      type: object
+      properties:
+        id: { type: string }
+        email: { type: string }
+        role: { $ref: "#/components/schemas/OrgRole" }
+        status: { type: string, enum: [pending, accepted, revoked, expired] }
+        invited_by_user_id: { type: string }
+        invited_by_name: { type: ["string", "null"] }
+        expires_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+      required: [id, email, role, status, invited_by_user_id, invited_by_name, expires_at, created_at]
+    TeamRosterResponse:
+      type: object
+      properties:
+        organization: { $ref: "#/components/schemas/OrganizationSummary" }
+        current_user_id: { type: string }
+        current_role: { $ref: "#/components/schemas/OrgRole" }
+        permissions: { $ref: "#/components/schemas/TeamPermissions" }
+        members:
+          type: array
+          items: { $ref: "#/components/schemas/TeamMember" }
+        invitations:
+          type: array
+          items: { $ref: "#/components/schemas/TeamInvitation" }
+      required: [organization, current_user_id, current_role, permissions, members, invitations]
+    InviteTeamMemberRequest:
+      type: object
+      properties:
+        email: { type: string, minLength: 3, maxLength: 320 }
+        role: { $ref: "#/components/schemas/OrgRole" }
+      required: [email, role]
+    InviteTeamMemberResult:
+      type: object
+      properties:
+        invitation: { $ref: "#/components/schemas/TeamInvitation" }
+        delivery_status: { type: string, enum: [sent, smtp_unconfigured, demo_logged] }
+      required: [invitation, delivery_status]
+    TeamInvitationResponse:
+      type: object
+      properties:
+        invitation: { $ref: "#/components/schemas/TeamInvitation" }
+      required: [invitation]
+    AcceptInvitationRequest:
+      type: object
+      properties:
+        token: { type: string, minLength: 16, maxLength: 512 }
+      required: [token]
+    AcceptInvitationResponse:
+      type: object
+      properties:
+        accepted: { type: boolean }
+        membership:
+          type: object
+          properties:
+            id: { type: string }
+            business_id: { type: string }
+            role: { $ref: "#/components/schemas/OrgRole" }
+          required: [id, business_id, role]
+        organization: { $ref: "#/components/schemas/OrganizationSummary" }
+      required: [accepted, membership, organization]
+    UpdateTeamMemberRoleRequest:
+      type: object
+      properties:
+        role: { $ref: "#/components/schemas/OrgRole" }
+      required: [role]
+    TeamMemberResponse:
+      type: object
+      properties:
+        member: { $ref: "#/components/schemas/TeamMember" }
+      required: [member]
+    RemoveTeamMemberResult:
+      type: object
+      properties:
+        removed_membership_id: { type: string }
+      required: [removed_membership_id]
+    AuditLogEntry:
+      type: object
+      properties:
+        id: { type: string }
+        business_id: { type: ["string", "null"] }
+        user_id: { type: ["string", "null"] }
+        actor_name: { type: ["string", "null"] }
+        actor_email: { type: ["string", "null"] }
+        entity: { type: string }
+        entity_id: { type: ["string", "null"] }
+        action: { type: string }
+        details: { type: ["object", "null"], additionalProperties: true }
+        created_at: { type: string, format: date-time }
+      required: [id, business_id, user_id, actor_name, actor_email, entity, entity_id, action, details, created_at]
+    AuditLogsResponse:
+      type: object
+      properties:
+        logs:
+          type: array
+          items: { $ref: "#/components/schemas/AuditLogEntry" }
+      required: [logs]
+
 

@@ -49,7 +49,7 @@ export const GetAuthMeResponse = zod.object({
   "id": zod.string(),
   "name": zod.string(),
   "email": zod.string(),
-  "role": zod.enum(['owner', 'admin', 'operator'])
+  "role": zod.enum(['owner', 'admin', 'manager', 'member', 'operator'])
 }),
   "business": zod.object({
   "id": zod.string(),
@@ -84,7 +84,16 @@ export const GetAuthMeResponse = zod.object({
   "in_list": zod.boolean(),
   "storage": zod.enum(['column', 'details'])
 }))
-}).describe('The industry profile of a workspace. The console renders lead fields, urgency and appointment wording from this instead of hard-coding one industry.')
+}).describe('The industry profile of a workspace. The console renders lead fields, urgency and appointment wording from this instead of hard-coding one industry.'),
+  "active_role": zod.enum(['owner', 'admin', 'manager', 'member']).optional(),
+  "organizations": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "slug": zod.string().nullable(),
+  "vertical": zod.enum(['real_estate', 'home_services']),
+  "role": zod.enum(['owner', 'admin', 'manager', 'member']),
+  "is_active": zod.boolean()
+})).optional()
 })
 
 
@@ -728,5 +737,260 @@ export const ReceiveTwilioStatusResponse = zod.void()
  * @summary Receive a signed Cal.com booking event
  */
 export const ReceiveCalcomEventResponse = zod.void()
+
+
+/**
+ * @summary List organizations the authenticated user belongs to
+ */
+export const ListOrganizationsResponse = zod.object({
+  "organizations": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "slug": zod.string().nullable(),
+  "vertical": zod.enum(['real_estate', 'home_services']),
+  "role": zod.enum(['owner', 'admin', 'manager', 'member']),
+  "is_active": zod.boolean()
+})),
+  "active_business_id": zod.string(),
+  "active_role": zod.enum(['owner', 'admin', 'manager', 'member'])
+})
+
+
+/**
+ * @summary Create a new organization workspace and become its owner
+ */
+export const createOrganizationBodyNameMin = 2;
+export const createOrganizationBodyNameMax = 100;
+
+
+
+export const CreateOrganizationBody = zod.object({
+  "name": zod.string().min(createOrganizationBodyNameMin).max(createOrganizationBodyNameMax),
+  "vertical": zod.enum(['real_estate', 'home_services']).optional(),
+  "market": zod.enum(['US', 'IN']).optional(),
+  "timezone": zod.string().optional()
+})
+
+export const CreateOrganizationResponse = zod.object({
+  "active_business_id": zod.string(),
+  "active_role": zod.enum(['owner', 'admin', 'manager', 'member']),
+  "organization": zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "slug": zod.string().nullable(),
+  "vertical": zod.enum(['real_estate', 'home_services']),
+  "role": zod.enum(['owner', 'admin', 'manager', 'member']),
+  "is_active": zod.boolean()
+})
+})
+
+
+/**
+ * @summary Switch active organization for the current session
+ */
+
+
+
+export const SwitchOrganizationBody = zod.object({
+  "business_id": zod.string().min(1)
+})
+
+export const SwitchOrganizationResponse = zod.object({
+  "active_business_id": zod.string(),
+  "active_role": zod.enum(['owner', 'admin', 'manager', 'member']),
+  "organization": zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "slug": zod.string().nullable(),
+  "vertical": zod.enum(['real_estate', 'home_services']),
+  "role": zod.enum(['owner', 'admin', 'manager', 'member']),
+  "is_active": zod.boolean()
+})
+})
+
+
+/**
+ * @summary Get active organization team members, invitations, and caller permissions
+ */
+export const GetTeamResponse = zod.object({
+  "organization": zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "slug": zod.string().nullable(),
+  "vertical": zod.enum(['real_estate', 'home_services']),
+  "role": zod.enum(['owner', 'admin', 'manager', 'member']),
+  "is_active": zod.boolean()
+}),
+  "current_user_id": zod.string(),
+  "current_role": zod.enum(['owner', 'admin', 'manager', 'member']),
+  "permissions": zod.object({
+  "can_invite": zod.boolean(),
+  "allowed_invite_roles": zod.array(zod.enum(['owner', 'admin', 'manager', 'member'])),
+  "can_manage_roles": zod.boolean(),
+  "can_remove_members": zod.boolean(),
+  "can_edit_settings": zod.boolean()
+}),
+  "members": zod.array(zod.object({
+  "membership_id": zod.string(),
+  "user_id": zod.string(),
+  "name": zod.string(),
+  "email": zod.string(),
+  "role": zod.enum(['owner', 'admin', 'manager', 'member']),
+  "joined_at": zod.coerce.date(),
+  "last_login_at": zod.coerce.date().nullable()
+})),
+  "invitations": zod.array(zod.object({
+  "id": zod.string(),
+  "email": zod.string(),
+  "role": zod.enum(['owner', 'admin', 'manager', 'member']),
+  "status": zod.enum(['pending', 'accepted', 'revoked', 'expired']),
+  "invited_by_user_id": zod.string(),
+  "invited_by_name": zod.string().nullable(),
+  "expires_at": zod.coerce.date(),
+  "created_at": zod.coerce.date()
+}))
+})
+
+
+/**
+ * @summary Create and send a team invitation for the active organization
+ */
+export const inviteTeamMemberBodyEmailMin = 3;
+export const inviteTeamMemberBodyEmailMax = 320;
+
+
+
+export const InviteTeamMemberBody = zod.object({
+  "email": zod.string().min(inviteTeamMemberBodyEmailMin).max(inviteTeamMemberBodyEmailMax),
+  "role": zod.enum(['owner', 'admin', 'manager', 'member'])
+})
+
+export const InviteTeamMemberResponse = zod.object({
+  "invitation": zod.object({
+  "id": zod.string(),
+  "email": zod.string(),
+  "role": zod.enum(['owner', 'admin', 'manager', 'member']),
+  "status": zod.enum(['pending', 'accepted', 'revoked', 'expired']),
+  "invited_by_user_id": zod.string(),
+  "invited_by_name": zod.string().nullable(),
+  "expires_at": zod.coerce.date(),
+  "created_at": zod.coerce.date()
+}),
+  "delivery_status": zod.enum(['sent', 'smtp_unconfigured', 'demo_logged'])
+})
+
+
+/**
+ * @summary Revoke a pending team invitation
+ */
+export const RevokeTeamInvitationParams = zod.object({
+  "invitationId": zod.coerce.string()
+})
+
+export const RevokeTeamInvitationResponse = zod.object({
+  "invitation": zod.object({
+  "id": zod.string(),
+  "email": zod.string(),
+  "role": zod.enum(['owner', 'admin', 'manager', 'member']),
+  "status": zod.enum(['pending', 'accepted', 'revoked', 'expired']),
+  "invited_by_user_id": zod.string(),
+  "invited_by_name": zod.string().nullable(),
+  "expires_at": zod.coerce.date(),
+  "created_at": zod.coerce.date()
+})
+})
+
+
+/**
+ * @summary Accept a team invitation as the authenticated user
+ */
+export const acceptTeamInvitationBodyTokenMin = 16;
+export const acceptTeamInvitationBodyTokenMax = 512;
+
+
+
+export const AcceptTeamInvitationBody = zod.object({
+  "token": zod.string().min(acceptTeamInvitationBodyTokenMin).max(acceptTeamInvitationBodyTokenMax)
+})
+
+export const AcceptTeamInvitationResponse = zod.object({
+  "accepted": zod.boolean(),
+  "membership": zod.object({
+  "id": zod.string(),
+  "business_id": zod.string(),
+  "role": zod.enum(['owner', 'admin', 'manager', 'member'])
+}),
+  "organization": zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "slug": zod.string().nullable(),
+  "vertical": zod.enum(['real_estate', 'home_services']),
+  "role": zod.enum(['owner', 'admin', 'manager', 'member']),
+  "is_active": zod.boolean()
+})
+})
+
+
+/**
+ * @summary Change the role of a team member
+ */
+export const UpdateTeamMemberRoleParams = zod.object({
+  "membershipId": zod.coerce.string()
+})
+
+export const UpdateTeamMemberRoleBody = zod.object({
+  "role": zod.enum(['owner', 'admin', 'manager', 'member'])
+})
+
+export const UpdateTeamMemberRoleResponse = zod.object({
+  "member": zod.object({
+  "membership_id": zod.string(),
+  "user_id": zod.string(),
+  "name": zod.string(),
+  "email": zod.string(),
+  "role": zod.enum(['owner', 'admin', 'manager', 'member']),
+  "joined_at": zod.coerce.date(),
+  "last_login_at": zod.coerce.date().nullable()
+})
+})
+
+
+/**
+ * @summary Remove a member from the active organization
+ */
+export const RemoveTeamMemberParams = zod.object({
+  "membershipId": zod.coerce.string()
+})
+
+export const RemoveTeamMemberResponse = zod.object({
+  "removed_membership_id": zod.string()
+})
+
+
+/**
+ * @summary Get recent RBAC and workspace audit log entries
+ */
+export const getAuditLogsQueryLimitMax = 100;
+
+
+
+export const GetAuditLogsQueryParams = zod.object({
+  "limit": zod.coerce.number().int().min(1).max(getAuditLogsQueryLimitMax).optional()
+})
+
+export const GetAuditLogsResponse = zod.object({
+  "logs": zod.array(zod.object({
+  "id": zod.string(),
+  "business_id": zod.string().nullable(),
+  "user_id": zod.string().nullable(),
+  "actor_name": zod.string().nullable(),
+  "actor_email": zod.string().nullable(),
+  "entity": zod.string(),
+  "entity_id": zod.string().nullable(),
+  "action": zod.string(),
+  "details": zod.record(zod.string(), zod.unknown()).nullable(),
+  "created_at": zod.coerce.date()
+}))
+})
 
 

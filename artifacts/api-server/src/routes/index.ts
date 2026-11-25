@@ -9,8 +9,11 @@ import leadsprintRouter, {
 import webhooksRouter from "./webhooks";
 import cronRouter from "./cron";
 import agentRouter from "./agent";
+import teamRouter from "./team";
+import { db } from "@workspace/db";
 import { requireAuth } from "../middlewares/auth";
 import { getClerkProxyHost } from "../middlewares/clerkProxyMiddleware";
+import { ACTIVE_BUSINESS_COOKIE, parseCookies, resolveActiveOrganization } from "../lib/orgContext";
 import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
@@ -55,9 +58,36 @@ if (demoAuthEnabled) {
     "LEADSPRINT_DEMO_AUTH is enabled: the operator console API is UNAUTHENTICATED " +
       "and every request is treated as the seeded demo operator. Local use only.",
   );
-  router.use((req, _res, next) => {
+  router.use(async (req, res, next) => {
     req.leadSprintUserId = DEMO_USER_ID;
     req.leadSprintBusinessId = DEMO_BUSINESS_ID;
+    req.leadSprintRole = "owner";
+
+    const hasOrgOverride =
+      Boolean(req.get("x-business-id")?.trim()) ||
+      parseCookies(req.headers.cookie)[ACTIVE_BUSINESS_COOKIE] !== undefined;
+
+    if (hasOrgOverride) {
+      try {
+        const resolved = await resolveActiveOrganization(
+          db,
+          DEMO_USER_ID,
+          DEMO_BUSINESS_ID,
+          req,
+          res,
+        );
+        if (!resolved.ok) {
+          res.status(resolved.status).json({ error: resolved.error });
+          return;
+        }
+        req.leadSprintBusinessId = resolved.businessId;
+        req.leadSprintRole = resolved.role;
+      } catch (err) {
+        next(err);
+        return;
+      }
+    }
+
     next();
   });
 } else {
@@ -94,6 +124,7 @@ if (demoAuthEnabled) {
   router.use(requireAuth);
 }
 
+router.use(teamRouter);
 router.use(leadsprintRouter);
 
 // Unknown /api/* paths are an API error, not an SPA route: answer with JSON

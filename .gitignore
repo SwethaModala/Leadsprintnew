@@ -16,6 +16,16 @@ node_modules
 .env.*
 !.env.example
 
+# private certificates, keys, and local secret artifacts
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.der
+*.jks
+*.secret
+
 # IDEs and editors
 /.idea
 .project

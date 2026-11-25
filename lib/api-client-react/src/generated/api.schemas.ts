@@ -70,12 +70,42 @@ export interface Error {
   error: string;
 }
 
+export type OrgRole = typeof OrgRole[keyof typeof OrgRole];
+
+
+export const OrgRole = {
+  owner: 'owner',
+  admin: 'admin',
+  manager: 'manager',
+  member: 'member',
+} as const;
+
+export type VerticalId = typeof VerticalId[keyof typeof VerticalId];
+
+
+export const VerticalId = {
+  real_estate: 'real_estate',
+  home_services: 'home_services',
+} as const;
+
+export interface OrganizationSummary {
+  id: string;
+  name: string;
+  /** @nullable */
+  slug: string | null;
+  vertical: VerticalId;
+  role: OrgRole;
+  is_active: boolean;
+}
+
 export type UserRole = typeof UserRole[keyof typeof UserRole];
 
 
 export const UserRole = {
   owner: 'owner',
   admin: 'admin',
+  manager: 'manager',
+  member: 'member',
   operator: 'operator',
 } as const;
 
@@ -92,14 +122,6 @@ export type BusinessMarket = typeof BusinessMarket[keyof typeof BusinessMarket];
 export const BusinessMarket = {
   US: 'US',
   IN: 'IN',
-} as const;
-
-export type VerticalId = typeof VerticalId[keyof typeof VerticalId];
-
-
-export const VerticalId = {
-  real_estate: 'real_estate',
-  home_services: 'home_services',
 } as const;
 
 export interface Business {
@@ -162,6 +184,8 @@ export interface AuthSession {
   user: User;
   business: Business;
   profile: VerticalProfile;
+  active_role?: OrgRole;
+  organizations?: OrganizationSummary[];
 }
 
 export type Score = typeof Score[keyof typeof Score];
@@ -512,6 +536,179 @@ export interface Usage {
   estimated_cost: number;
 }
 
+export interface OrganizationsResponse {
+  organizations: OrganizationSummary[];
+  active_business_id: string;
+  active_role: OrgRole;
+}
+
+export type CreateOrganizationRequestMarket = typeof CreateOrganizationRequestMarket[keyof typeof CreateOrganizationRequestMarket];
+
+
+export const CreateOrganizationRequestMarket = {
+  US: 'US',
+  IN: 'IN',
+} as const;
+
+export interface CreateOrganizationRequest {
+  /**
+     * @minLength 2
+     * @maxLength 100
+     */
+  name: string;
+  vertical?: VerticalId;
+  market?: CreateOrganizationRequestMarket;
+  timezone?: string;
+}
+
+export interface SwitchOrganizationRequest {
+  /** @minLength 1 */
+  business_id: string;
+}
+
+export interface OrganizationSwitchResponse {
+  active_business_id: string;
+  active_role: OrgRole;
+  organization: OrganizationSummary;
+}
+
+export interface TeamPermissions {
+  can_invite: boolean;
+  allowed_invite_roles: OrgRole[];
+  can_manage_roles: boolean;
+  can_remove_members: boolean;
+  can_edit_settings: boolean;
+}
+
+export interface TeamMember {
+  membership_id: string;
+  user_id: string;
+  name: string;
+  email: string;
+  role: OrgRole;
+  joined_at: string;
+  /** @nullable */
+  last_login_at: string | null;
+}
+
+export type TeamInvitationStatus = typeof TeamInvitationStatus[keyof typeof TeamInvitationStatus];
+
+
+export const TeamInvitationStatus = {
+  pending: 'pending',
+  accepted: 'accepted',
+  revoked: 'revoked',
+  expired: 'expired',
+} as const;
+
+export interface TeamInvitation {
+  id: string;
+  email: string;
+  role: OrgRole;
+  status: TeamInvitationStatus;
+  invited_by_user_id: string;
+  /** @nullable */
+  invited_by_name: string | null;
+  expires_at: string;
+  created_at: string;
+}
+
+export interface TeamRosterResponse {
+  organization: OrganizationSummary;
+  current_user_id: string;
+  current_role: OrgRole;
+  permissions: TeamPermissions;
+  members: TeamMember[];
+  invitations: TeamInvitation[];
+}
+
+export interface InviteTeamMemberRequest {
+  /**
+     * @minLength 3
+     * @maxLength 320
+     */
+  email: string;
+  role: OrgRole;
+}
+
+export type InviteTeamMemberResultDeliveryStatus = typeof InviteTeamMemberResultDeliveryStatus[keyof typeof InviteTeamMemberResultDeliveryStatus];
+
+
+export const InviteTeamMemberResultDeliveryStatus = {
+  sent: 'sent',
+  smtp_unconfigured: 'smtp_unconfigured',
+  demo_logged: 'demo_logged',
+} as const;
+
+export interface InviteTeamMemberResult {
+  invitation: TeamInvitation;
+  delivery_status: InviteTeamMemberResultDeliveryStatus;
+}
+
+export interface TeamInvitationResponse {
+  invitation: TeamInvitation;
+}
+
+export interface AcceptInvitationRequest {
+  /**
+     * @minLength 16
+     * @maxLength 512
+     */
+  token: string;
+}
+
+export type AcceptInvitationResponseMembership = {
+  id: string;
+  business_id: string;
+  role: OrgRole;
+};
+
+export interface AcceptInvitationResponse {
+  accepted: boolean;
+  membership: AcceptInvitationResponseMembership;
+  organization: OrganizationSummary;
+}
+
+export interface UpdateTeamMemberRoleRequest {
+  role: OrgRole;
+}
+
+export interface TeamMemberResponse {
+  member: TeamMember;
+}
+
+export interface RemoveTeamMemberResult {
+  removed_membership_id: string;
+}
+
+/**
+ * @nullable
+ */
+export type AuditLogEntryDetails = { [key: string]: unknown } | null;
+
+export interface AuditLogEntry {
+  id: string;
+  /** @nullable */
+  business_id: string | null;
+  /** @nullable */
+  user_id: string | null;
+  /** @nullable */
+  actor_name: string | null;
+  /** @nullable */
+  actor_email: string | null;
+  entity: string;
+  /** @nullable */
+  entity_id: string | null;
+  action: string;
+  /** @nullable */
+  details: AuditLogEntryDetails;
+  created_at: string;
+}
+
+export interface AuditLogsResponse {
+  logs: AuditLogEntry[];
+}
+
 /**
  * Resource not found
  */
@@ -570,4 +767,12 @@ export const GetCallsStatus = {
   failed: 'failed',
   uncertain: 'uncertain',
 } as const;
+
+export type GetAuditLogsParams = {
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+};
 
