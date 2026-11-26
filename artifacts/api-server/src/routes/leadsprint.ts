@@ -4,6 +4,7 @@ import { and, desc, eq, gte, ilike, or, sql } from "drizzle-orm";
 import { db as defaultDb } from "@workspace/db";
 import {
   activitiesTable,
+  agentsTable,
   appointmentsTable,
   businessesTable,
   callsTable,
@@ -23,7 +24,9 @@ import {
   requireRole,
 } from "../middlewares/rbac";
 import { listUserOrganizations } from "../lib/orgContext";
+import { tenantEventBus } from "../lib/eventBus";
 import {
+  GetActiveCallsResponse,
   GetActivityQueryParams,
   GetActivityResponse,
   GetAppointmentsResponse,
@@ -376,6 +379,49 @@ async function getCallDto(row: typeof callsTable.$inferSelect) {
   };
 }
 
+async function getActiveCallDto(row: typeof callsTable.$inferSelect) {
+  let contactName: string | null = null;
+  let phone = row.destinationNumber || row.callerNumber || "";
+  if (row.contactId) {
+    const [contact] = await db
+      .select({ name: contactsTable.name, phone: contactsTable.phone })
+      .from(contactsTable)
+      .where(and(eq(contactsTable.id, row.contactId), eq(contactsTable.businessId, row.businessId)))
+      .limit(1);
+    if (contact) {
+      contactName = contact.name && contact.name !== "Unknown caller" ? contact.name : null;
+      if (!phone) phone = contact.phone;
+    }
+  }
+
+  let agentName: string | null = null;
+  if (row.agentId) {
+    const [agent] = await db
+      .select({ name: agentsTable.name })
+      .from(agentsTable)
+      .where(and(eq(agentsTable.id, row.agentId), eq(agentsTable.businessId, row.businessId)))
+      .limit(1);
+    if (agent) agentName = agent.name;
+  }
+
+  return {
+    id: row.id,
+    lead_id: row.leadId && row.leadId !== "unknown" ? row.leadId : null,
+    lead_name: contactName,
+    phone,
+    provider: row.provider,
+    status: (row.status === "in_progress" ? "in_progress" : "queued") as "in_progress" | "queued",
+    direction: (row.direction === "inbound" ? "inbound" : "outbound") as "inbound" | "outbound",
+    caller_number: row.callerNumber ?? null,
+    destination_number: row.destinationNumber ?? null,
+    agent_id: row.agentId ?? null,
+    agent_name: agentName,
+    started_at: iso(row.startedAt),
+    duration_seconds: row.durationSeconds ?? null,
+    created_at: row.createdAt.toISOString(),
+  };
+}
+
 router.get("/auth/me", requireRole(...READ_ROLES), async (_req, res): Promise<void> => {
   const req = _req;
   const businessId = scopedBusinessId(req);
@@ -522,6 +568,21 @@ router.post("/leads/import", requireRole(...OPERATIONS_ROLES), async (req, res):
   res.json(ImportLeadsResponse.parse({ imported, skipped, leads: result.filter(Boolean) }));
 });
 
+router.get("/calls/active", requireRole(...READ_ROLES), async (req, res): Promise<void> => {
+  const BUSINESS_ID = scopedBusinessId(req);
+  const rows = await db
+    .select()
+    .from(callsTable)
+    .where(
+      and(
+        eq(callsTable.businessId, BUSINESS_ID),
+        or(eq(callsTable.status, "in_progress"), eq(callsTable.status, "queued")),
+      ),
+    )
+    .orderBy(desc(callsTable.createdAt));
+  res.json(GetActiveCallsResponse.parse(await Promise.all(rows.map(getActiveCallDto))));
+});
+
 router.get("/calls", requireRole(...READ_ROLES), async (req, res): Promise<void> => {
   const BUSINESS_ID = scopedBusinessId(req);
   const query = GetCallsQueryParams.safeParse(req.query);
@@ -615,6 +676,14 @@ router.post("/calls/start", requireRole(...OPERATIONS_ROLES), async (req, res): 
     });
     return;
   }
+  tenantEventBus.broadcast(BUSINESS_ID, "call_update", {
+    id: current.id,
+    status: current.status,
+    lead_id: current.leadId ?? null,
+    direction: "outbound",
+    duration_seconds: current.durationSeconds ?? null,
+    outcome: current.outcome ?? null,
+  });
   res.status(201).json(StartCallResponse.parse(await getCallDto(current)));
 });
 
@@ -670,6 +739,14 @@ router.post("/calls/:id/retry", requireRole(...OPERATIONS_ROLES), async (req, re
     });
     return;
   }
+  tenantEventBus.broadcast(BUSINESS_ID, "call_update", {
+    id: current.id,
+    status: current.status,
+    lead_id: current.leadId ?? null,
+    direction: "outbound",
+    duration_seconds: current.durationSeconds ?? null,
+    outcome: current.outcome ?? null,
+  });
   res.status(201).json(StartCallResponse.parse(await getCallDto(current)));
 });
 

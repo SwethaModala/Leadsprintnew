@@ -26,6 +26,7 @@ import {
   statusTone,
 } from '@/components/common';
 import { SetupChecklist } from '@/components/setup-checklist';
+import { ActiveCallsWidget } from '@/components/ActiveCallsWidget';
 import { ArrowUpRight } from 'lucide-react';
 
 export default function TodayPage() {
@@ -133,6 +134,8 @@ export default function TodayPage() {
           tone={metrics.unresolved_messages ? 'warm' : 'default'}
         />
       </div>
+
+      <ActiveCallsWidget compact />
 
       <SetupChecklist />
 

@@ -29,6 +29,10 @@ export function setBaseUrl(url: string | null): void {
   _baseUrl = url ? url.replace(/\/+$/, "") : null;
 }
 
+export function getBaseUrl(): string | null {
+  return _baseUrl;
+}
+
 /**
  * Register a getter that supplies a bearer auth token.  Before every fetch
  * the getter is invoked; when it returns a non-null string, an
@@ -42,6 +46,11 @@ export function setBaseUrl(url: string | null): void {
  */
 export function setAuthTokenGetter(getter: AuthTokenGetter | null): void {
   _authTokenGetter = getter;
+}
+
+export async function getAuthToken(): Promise<string | null> {
+  if (!_authTokenGetter) return null;
+  return await _authTokenGetter();
 }
 
 function isRequest(input: RequestInfo | URL): input is Request {

@@ -243,6 +243,34 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Call"
+  /calls/active:
+    get:
+      operationId: getActiveCalls
+      tags: [calls]
+      summary: List currently active and queued calls
+      description: Returns calls that are in_progress or queued for the authenticated workspace.
+      responses:
+        "200":
+          description: Active calls list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ActiveCallDto"
+  /events/live:
+    get:
+      operationId: subscribeLiveEvents
+      tags: [events]
+      summary: Stream live tenant events via SSE
+      description: Server-Sent Events stream delivering real-time call and status updates.
+      responses:
+        "200":
+          description: SSE event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
   /calls/start:
     post:
       operationId: startCall
@@ -1382,6 +1410,24 @@ components:
         booked: { type: boolean }
         error_state: { type: ["string", "null"] }
       required: [id, lead_id, lead_name, phone, provider, status, started_at, ended_at, duration_seconds, summary, outcome, transferred, booked, error_state]
+    ActiveCallDto:
+      type: object
+      properties:
+        id: { type: string }
+        lead_id: { type: ["string", "null"] }
+        lead_name: { type: ["string", "null"] }
+        phone: { type: string }
+        provider: { type: string }
+        status: { type: string, enum: [queued, in_progress] }
+        direction: { type: string, enum: [inbound, outbound] }
+        caller_number: { type: ["string", "null"] }
+        destination_number: { type: ["string", "null"] }
+        agent_id: { type: ["string", "null"] }
+        agent_name: { type: ["string", "null"] }
+        started_at: { type: ["string", "null"] }
+        duration_seconds: { type: ["number", "null"] }
+        created_at: { type: string }
+      required: [id, lead_id, lead_name, phone, provider, status, direction, caller_number, destination_number, agent_id, agent_name, started_at, duration_seconds, created_at]
     StartCallInput:
       type: object
       properties:

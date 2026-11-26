@@ -13,6 +13,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
   formatDate, statusTone,
 } from "@/components/common";
+import { ActiveCallsWidget } from "@/components/ActiveCallsWidget";
 
 export default function CallsPage() {
   const [status, setStatus] = useState("all");
@@ -46,6 +47,7 @@ export default function CallsPage() {
   return <div className="animate-rise-in space-y-6">
     <PageHeader eyebrow="Console" title="Call History"
       description="Actual call status, provider outcome, and follow-up details." />
+    <ActiveCallsWidget onSelectCall={(id) => setSelected(id)} />
     <div className="flex flex-col gap-3 sm:flex-row">
       <label className="relative max-w-md flex-1">
         <span className="sr-only">Search calls</span>

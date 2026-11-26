@@ -12,6 +12,7 @@ import agentRouter from "./agent";
 import teamRouter from "./team";
 import securityRouter from "./security";
 import agentsRouter from "./agents";
+import eventsRouter from "./events";
 import { db } from "@workspace/db";
 import { requireAuth } from "../middlewares/auth";
 import { getClerkProxyHost } from "../middlewares/clerkProxyMiddleware";
@@ -129,6 +130,7 @@ if (demoAuthEnabled) {
 router.use(teamRouter);
 router.use(securityRouter);
 router.use(agentsRouter);
+router.use(eventsRouter);
 router.use(leadsprintRouter);
 
 // Unknown /api/* paths are an API error, not an SPA route: answer with JSON

@@ -22,6 +22,7 @@ import type {
 import type {
   AcceptInvitationRequest,
   AcceptInvitationResponse,
+  ActiveCallDto,
   Activity,
   AgentDetailResponse,
   AgentListResponse,
@@ -1029,6 +1030,162 @@ export function useGetCalls<TData = Awaited<ReturnType<typeof getCalls>>, TError
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetCallsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetActiveCallsUrl = () => {
+
+
+
+
+  return `/api/calls/active`
+}
+
+/**
+ * Returns calls that are in_progress or queued for the authenticated workspace.
+ * @summary List currently active and queued calls
+ */
+export const getActiveCalls = async ( options?: Parameters<typeof customFetch>[1]): Promise<ActiveCallDto[]> => {
+
+  return customFetch<ActiveCallDto[]>(getGetActiveCallsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetActiveCallsQueryKey = () => {
+    return [
+    `/api/calls/active`
+    ] as const;
+    }
+
+
+export const getGetActiveCallsQueryOptions = <TData = Awaited<ReturnType<typeof getActiveCalls>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getActiveCalls>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetActiveCallsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getActiveCalls>>> = ({ signal }) => getActiveCalls({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getActiveCalls>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetActiveCallsQueryResult = NonNullable<Awaited<ReturnType<typeof getActiveCalls>>>
+export type GetActiveCallsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List currently active and queued calls
+ */
+
+export function useGetActiveCalls<TData = Awaited<ReturnType<typeof getActiveCalls>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getActiveCalls>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetActiveCallsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getSubscribeLiveEventsUrl = () => {
+
+
+
+
+  return `/api/events/live`
+}
+
+/**
+ * Server-Sent Events stream delivering real-time call and status updates.
+ * @summary Stream live tenant events via SSE
+ */
+export const subscribeLiveEvents = async ( options?: Parameters<typeof customFetch>[1]): Promise<string> => {
+
+  return customFetch<string>(getSubscribeLiveEventsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getSubscribeLiveEventsQueryKey = () => {
+    return [
+    `/api/events/live`
+    ] as const;
+    }
+
+
+export const getSubscribeLiveEventsQueryOptions = <TData = Awaited<ReturnType<typeof subscribeLiveEvents>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof subscribeLiveEvents>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getSubscribeLiveEventsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof subscribeLiveEvents>>> = ({ signal }) => subscribeLiveEvents({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof subscribeLiveEvents>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type SubscribeLiveEventsQueryResult = NonNullable<Awaited<ReturnType<typeof subscribeLiveEvents>>>
+export type SubscribeLiveEventsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Stream live tenant events via SSE
+ */
+
+export function useSubscribeLiveEvents<TData = Awaited<ReturnType<typeof subscribeLiveEvents>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof subscribeLiveEvents>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getSubscribeLiveEventsQueryOptions(options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

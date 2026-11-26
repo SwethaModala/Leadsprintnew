@@ -394,6 +394,47 @@ export interface Call {
   error_state: string | null;
 }
 
+export type ActiveCallDtoStatus = typeof ActiveCallDtoStatus[keyof typeof ActiveCallDtoStatus];
+
+
+export const ActiveCallDtoStatus = {
+  queued: 'queued',
+  in_progress: 'in_progress',
+} as const;
+
+export type ActiveCallDtoDirection = typeof ActiveCallDtoDirection[keyof typeof ActiveCallDtoDirection];
+
+
+export const ActiveCallDtoDirection = {
+  inbound: 'inbound',
+  outbound: 'outbound',
+} as const;
+
+export interface ActiveCallDto {
+  id: string;
+  /** @nullable */
+  lead_id: string | null;
+  /** @nullable */
+  lead_name: string | null;
+  phone: string;
+  provider: string;
+  status: ActiveCallDtoStatus;
+  direction: ActiveCallDtoDirection;
+  /** @nullable */
+  caller_number: string | null;
+  /** @nullable */
+  destination_number: string | null;
+  /** @nullable */
+  agent_id: string | null;
+  /** @nullable */
+  agent_name: string | null;
+  /** @nullable */
+  started_at: string | null;
+  /** @nullable */
+  duration_seconds: number | null;
+  created_at: string;
+}
+
 export interface StartCallInput {
   lead_id: string;
 }

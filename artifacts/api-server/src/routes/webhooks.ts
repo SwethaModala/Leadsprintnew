@@ -42,6 +42,7 @@ import {
   intakeIdempotencyKey,
 } from "../lib/callQueue";
 import { recordVoiceUsage, VOICE_COST_PER_MINUTE } from "../lib/usage";
+import { tenantEventBus } from "../lib/eventBus";
 import { createWebhookLimiter } from "../middlewares/rateLimit";
 import { classifyUrgency, getProfile, isOutOfArea, validateDetails } from "../lib/verticals";
 import { sendBusinessAlertEmail } from "../lib/mailer";
@@ -605,6 +606,16 @@ router.post("/webhooks/retell", async (req, res): Promise<void> => {
         : disconnectionReason,
       errorState: status === "error" ? "Retell reported a failed call" : transferFailed ? "transfer_failed" : undefined,
     }).where(and(eq(callsTable.businessId, businessId), eq(callsTable.providerCallId, callId)));
+
+    const broadcastStatus = terminal ? (status === "error" ? "failed" : "completed") : "in_progress";
+    tenantEventBus.broadcast(businessId, "call_update", {
+      id: callBefore?.id ?? callId,
+      status: broadcastStatus,
+      duration_seconds: duration ?? null,
+      outcome: transferFailed
+        ? "Transfer failed — message captured for manual follow-up"
+        : (disconnectionReason ?? null),
+    });
 
     if (firstReportedDuration) {
       // Attributed to the current month's usage row (created on demand),

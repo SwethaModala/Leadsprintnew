@@ -451,6 +451,36 @@ export const GetCallsResponse = zod.array(GetCallsResponseItem)
 
 
 /**
+ * Returns calls that are in_progress or queued for the authenticated workspace.
+ * @summary List currently active and queued calls
+ */
+export const GetActiveCallsResponseItem = zod.object({
+  "id": zod.string(),
+  "lead_id": zod.string().nullable(),
+  "lead_name": zod.string().nullable(),
+  "phone": zod.string(),
+  "provider": zod.string(),
+  "status": zod.enum(['queued', 'in_progress']),
+  "direction": zod.enum(['inbound', 'outbound']),
+  "caller_number": zod.string().nullable(),
+  "destination_number": zod.string().nullable(),
+  "agent_id": zod.string().nullable(),
+  "agent_name": zod.string().nullable(),
+  "started_at": zod.string().nullable(),
+  "duration_seconds": zod.number().nullable(),
+  "created_at": zod.string()
+})
+export const GetActiveCallsResponse = zod.array(GetActiveCallsResponseItem)
+
+
+/**
+ * Server-Sent Events stream delivering real-time call and status updates.
+ * @summary Stream live tenant events via SSE
+ */
+export const SubscribeLiveEventsResponse = zod.unknown()
+
+
+/**
  * @summary Safely queue a call for a lead
  */
 export const StartCallBody = zod.object({
