@@ -400,6 +400,7 @@ export type ActiveCallDtoStatus = typeof ActiveCallDtoStatus[keyof typeof Active
 export const ActiveCallDtoStatus = {
   queued: 'queued',
   in_progress: 'in_progress',
+  uncertain: 'uncertain',
 } as const;
 
 export type ActiveCallDtoDirection = typeof ActiveCallDtoDirection[keyof typeof ActiveCallDtoDirection];
@@ -433,10 +434,31 @@ export interface ActiveCallDto {
   /** @nullable */
   duration_seconds: number | null;
   created_at: string;
+  stop_pending?: boolean;
+  stop_ambiguous?: boolean;
 }
 
 export interface StartCallInput {
   lead_id: string;
+}
+
+export interface StopCallRequest {
+  force_retry?: boolean;
+}
+
+export interface StopCallResult {
+  call_id: string;
+  status: string;
+  message: string;
+  stop_pending?: boolean;
+  stop_ambiguous?: boolean;
+}
+
+export interface ReconcileCallResult {
+  call_id: string;
+  status: string;
+  billed: boolean;
+  message?: string;
 }
 
 export type AppointmentStatus = typeof AppointmentStatus[keyof typeof AppointmentStatus];
@@ -1042,6 +1064,11 @@ export interface UpdatePhoneNumberRequest {
 export interface UpdatePhoneNumberResult {
   phone_number: PhoneNumberSummary;
 }
+
+/**
+ * Bad request
+ */
+export type BadRequestResponse = Error;
 
 /**
  * Resource not found

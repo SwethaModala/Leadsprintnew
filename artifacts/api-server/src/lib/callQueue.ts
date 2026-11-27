@@ -34,8 +34,11 @@ import {
   db as defaultDb,
   leadsTable,
   phoneNumbersTable,
+  providerEventsTable,
   workflowJobsTable,
 } from "@workspace/db";
+import { reconcileCallAndBillUnderLock } from "./callBilling";
+import { extractRetellCall } from "./providers";
 import { evaluateCallPolicy, nextAllowedCallTime } from "./policy";
 import { isPhoneSuppressed } from "./suppression";
 import { buildCallVariables } from "./callVariables";
@@ -592,8 +595,71 @@ export async function dispatchQueuedCall(input: {
         summary:
           "Retell accepted the call and will report the final outcome by webhook.",
       })
-      .where(and(eq(callsTable.id, attempt.id), eq(callsTable.businessId, businessId)))
+      .where(
+        and(
+          eq(callsTable.id, attempt.id),
+          eq(callsTable.businessId, businessId),
+          eq(callsTable.status, "in_progress"),
+        ),
+      )
       .returning();
+
+    // In-flight unmatched webhook drain
+    try {
+      await db.transaction(async (tx) => {
+        // Standard lock order: 1. Lock call row
+        const [callRow] = await tx
+          .select()
+          .from(callsTable)
+          .where(and(eq(callsTable.id, attempt.id), eq(callsTable.businessId, businessId)))
+          .for("update");
+
+        if (!callRow) return;
+
+        // 2. Lock matching pending unmatched events
+        const pendingEvents = await tx
+          .select()
+          .from(providerEventsTable)
+          .where(
+            and(
+              eq(providerEventsTable.businessId, businessId),
+              eq(providerEventsTable.provider, "Retell"),
+              eq(providerEventsTable.eventType, "unmatched_webhook"),
+              sql`${providerEventsTable.payload}->>'unmatched_call_id' = ${live.callId}`,
+            ),
+          )
+          .for("update");
+
+        for (const pending of pendingEvents) {
+          const rawPayload = pending.payload as Record<string, unknown>;
+          const retellCall = extractRetellCall(rawPayload);
+
+          await reconcileCallAndBillUnderLock(tx, {
+            callId: attempt.id,
+            businessId,
+            providerStatus: retellCall.call_status as any,
+            startTimestampMs: retellCall.start_timestamp as any,
+            endTimestampMs: retellCall.end_timestamp as any,
+            durationMs: retellCall.duration_ms as any,
+            disconnectionReason: retellCall.disconnection_reason as any,
+            transcript: retellCall.transcript as any,
+            analysis: retellCall.call_analysis as any,
+            sourceEvent: "drain:in_flight",
+          });
+
+          await tx
+            .update(providerEventsTable)
+            .set({
+              eventType: "unmatched_webhook_reconciled",
+              processedAt: new Date(),
+            })
+            .where(eq(providerEventsTable.id, pending.id));
+        }
+      });
+    } catch (drainErr) {
+      logger.warn({ err: drainErr, callId: attempt.id }, "In-flight unmatched drain warning");
+    }
+
     await db.insert(activitiesTable).values({
       id: id("activity"),
       businessId,
@@ -614,7 +680,13 @@ export async function dispatchQueuedCall(input: {
         summary:
           "The call request could not be confirmed. Reconcile against the provider before retrying.",
       })
-      .where(and(eq(callsTable.id, attempt.id), eq(callsTable.businessId, businessId)))
+      .where(
+        and(
+          eq(callsTable.id, attempt.id),
+          eq(callsTable.businessId, businessId),
+          eq(callsTable.status, "in_progress"),
+        ),
+      )
       .returning();
     return {
       outcome: "provider_uncertain",

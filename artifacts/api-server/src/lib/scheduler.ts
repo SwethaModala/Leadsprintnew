@@ -1,8 +1,10 @@
 import { logger } from "./logger";
 import { db } from "@workspace/db";
-import { workflowJobsTable, callsTable } from "@workspace/db";
-import { and, eq, lte, asc } from "drizzle-orm";
+import { workflowJobsTable, callsTable, providerEventsTable } from "@workspace/db";
+import { and, eq, lte, asc, sql } from "drizzle-orm";
 import { dispatchQueuedCall } from "./callQueue";
+import { reconcileCallAndBillUnderLock } from "./callBilling";
+import { extractRetellCall } from "./providers";
 
 export interface SchedulerOptions {
   enabled?: boolean;
@@ -390,6 +392,13 @@ export async function processQueuedJobs(
     }
   }
 
+  // Periodic sweep for unmatched webhooks
+  try {
+    await sweepUnmatchedEvents(handle);
+  } catch (sweepErr) {
+    logger.warn({ err: sweepErr }, "Unmatched events sweep failed during processQueuedJobs");
+  }
+
   return {
     jobs_seen: jobs.length,
     started,
@@ -398,6 +407,89 @@ export async function processQueuedJobs(
     failed,
     already_handled,
   };
+}
+
+/**
+ * Sweeps provider_events for pending unmatched webhooks whose calls now exist.
+ * Reconciles state, executes billing under row locks, and updates events to reconciled.
+ */
+export async function sweepUnmatchedEvents(handle: typeof db = db): Promise<number> {
+  const pendingEvents = await handle
+    .select()
+    .from(providerEventsTable)
+    .where(
+      and(
+        eq(providerEventsTable.provider, "Retell"),
+        eq(providerEventsTable.eventType, "unmatched_webhook"),
+      ),
+    )
+    .limit(50);
+
+  let reconciledCount = 0;
+
+  for (const pending of pendingEvents) {
+    const rawPayload = pending.payload as Record<string, unknown>;
+    const retellCall = extractRetellCall(rawPayload);
+    const unmatchedCallId =
+      (rawPayload.unmatched_call_id as string) || (retellCall.call_id as string);
+
+    if (!unmatchedCallId) continue;
+
+    await handle.transaction(async (tx) => {
+      // Lock hierarchy: 1. Lock matching call row
+      const [callRow] = await tx
+        .select()
+        .from(callsTable)
+        .where(
+          and(
+            eq(callsTable.businessId, pending.businessId),
+            eq(callsTable.providerCallId, unmatchedCallId),
+          ),
+        )
+        .for("update");
+
+      if (!callRow) return;
+
+      // 2. Lock event row
+      const [lockedEvent] = await tx
+        .select()
+        .from(providerEventsTable)
+        .where(
+          and(
+            eq(providerEventsTable.id, pending.id),
+            eq(providerEventsTable.eventType, "unmatched_webhook"),
+          ),
+        )
+        .for("update");
+
+      if (!lockedEvent) return;
+
+      await reconcileCallAndBillUnderLock(tx, {
+        callId: callRow.id,
+        businessId: pending.businessId,
+        providerStatus: retellCall.call_status as any,
+        startTimestampMs: retellCall.start_timestamp as any,
+        endTimestampMs: retellCall.end_timestamp as any,
+        durationMs: retellCall.duration_ms as any,
+        disconnectionReason: retellCall.disconnection_reason as any,
+        transcript: retellCall.transcript as any,
+        analysis: retellCall.call_analysis as any,
+        sourceEvent: "cron:sweep_unmatched",
+      });
+
+      await tx
+        .update(providerEventsTable)
+        .set({
+          eventType: "unmatched_webhook_reconciled",
+          processedAt: new Date(),
+        })
+        .where(eq(providerEventsTable.id, pending.id));
+
+      reconciledCount += 1;
+    });
+  }
+
+  return reconciledCount;
 }
 
 export const globalScheduler = new InternalWorkerScheduler();

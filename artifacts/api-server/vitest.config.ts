@@ -10,7 +10,9 @@ export default defineConfig({
       DATABASE_URL:
         process.env.DATABASE_URL ?? "postgres://unused:unused@127.0.0.1:1/unused",
     },
-    // PGlite starts a WASM Postgres per suite; give it room on cold CI.
+    // PGlite starts a WASM Postgres per suite; run with process forks and sequential files to avoid V8 Wasm JIT thread crashes on Windows.
+    pool: "forks",
+    fileParallelism: false,
     testTimeout: 30_000,
     hookTimeout: 30_000,
   },

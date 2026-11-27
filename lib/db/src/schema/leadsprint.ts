@@ -144,6 +144,9 @@ export const callsTable = pgTable("calls", {
     .$type<Array<Record<string, unknown>>>(),
   recordingUrl: text("recording_url"),
   disconnectionReason: text("disconnection_reason"),
+  // Phase 4B additions
+  connectedAt: timestamp("connected_at", { withTimezone: true }),
+  metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => ({
   // Provider call ids are only unique within a tenant: two workspaces may

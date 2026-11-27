@@ -460,7 +460,7 @@ export const GetActiveCallsResponseItem = zod.object({
   "lead_name": zod.string().nullable(),
   "phone": zod.string(),
   "provider": zod.string(),
-  "status": zod.enum(['queued', 'in_progress']),
+  "status": zod.enum(['queued', 'in_progress', 'uncertain']),
   "direction": zod.enum(['inbound', 'outbound']),
   "caller_number": zod.string().nullable(),
   "destination_number": zod.string().nullable(),
@@ -468,7 +468,9 @@ export const GetActiveCallsResponseItem = zod.object({
   "agent_name": zod.string().nullable(),
   "started_at": zod.string().nullable(),
   "duration_seconds": zod.number().nullable(),
-  "created_at": zod.string()
+  "created_at": zod.string(),
+  "stop_pending": zod.boolean().optional(),
+  "stop_ambiguous": zod.boolean().optional()
 })
 export const GetActiveCallsResponse = zod.array(GetActiveCallsResponseItem)
 
@@ -513,6 +515,68 @@ export const GetCallParams = zod.object({
 })
 
 export const GetCallResponse = zod.object({
+  "id": zod.string(),
+  "lead_id": zod.string(),
+  "lead_name": zod.string(),
+  "phone": zod.string(),
+  "provider": zod.string(),
+  "status": zod.enum(['queued', 'in_progress', 'completed', 'failed', 'uncertain', 'policy_blocked']),
+  "started_at": zod.string().nullable(),
+  "ended_at": zod.string().nullable(),
+  "duration_seconds": zod.number().nullable(),
+  "summary": zod.string(),
+  "outcome": zod.string(),
+  "transferred": zod.boolean(),
+  "booked": zod.boolean(),
+  "error_state": zod.string().nullable()
+})
+
+
+/**
+ * @summary Stop an active call at provider or cancel a queued call
+ */
+export const StopCallParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const stopCallBodyForceRetryDefault = false;
+
+export const StopCallBody = zod.object({
+  "force_retry": zod.boolean().default(stopCallBodyForceRetryDefault)
+})
+
+export const StopCallResponse = zod.object({
+  "call_id": zod.string(),
+  "status": zod.string(),
+  "message": zod.string(),
+  "stop_pending": zod.boolean().optional(),
+  "stop_ambiguous": zod.boolean().optional()
+})
+
+
+/**
+ * @summary Force authoritative provider reconciliation for a call
+ */
+export const ReconcileCallParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const ReconcileCallResponse = zod.object({
+  "call_id": zod.string(),
+  "status": zod.string(),
+  "billed": zod.boolean(),
+  "message": zod.string().optional()
+})
+
+
+/**
+ * @summary Cancel a queued call before provider dispatch
+ */
+export const CancelQueuedCallParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const CancelQueuedCallResponse = zod.object({
   "id": zod.string(),
   "lead_id": zod.string(),
   "lead_name": zod.string(),

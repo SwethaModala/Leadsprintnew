@@ -9,7 +9,13 @@ import {
   Loader2,
   AlertCircle,
 } from "lucide-react";
-import { useGetActiveCalls, type ActiveCallDto } from "@workspace/api-client-react";
+import {
+  useGetActiveCalls,
+  useStopCall,
+  useCancelQueuedCall,
+  useReconcileCall,
+  type ActiveCallDto,
+} from "@workspace/api-client-react";
 import { useAuthenticatedEventStream } from "../lib/useAuthenticatedEventStream";
 import { Badge, Button, Skeleton } from "./common";
 
@@ -215,7 +221,37 @@ function ActiveCallCard({
   onSelect: () => void;
 }) {
   const isInProgress = call.status === "in_progress";
+  const isUncertain = call.status === "uncertain";
+  const isQueued = call.status === "queued";
   const isInbound = call.direction === "inbound";
+  const isStopPending = Boolean(call.stop_pending);
+  const isStopAmbiguous = Boolean(call.stop_ambiguous);
+
+  const stopCallMutation = useStopCall();
+  const cancelCallMutation = useCancelQueuedCall();
+  const reconcileCallMutation = useReconcileCall();
+
+  const handleStop = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (isQueued) {
+      await cancelCallMutation.mutateAsync({ id: call.id });
+    } else {
+      await stopCallMutation.mutateAsync({ id: call.id, data: { force_retry: false } });
+    }
+  };
+
+  const handleForceStop = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    await stopCallMutation.mutateAsync({ id: call.id, data: { force_retry: true } });
+  };
+
+  const handleReconcile = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    await reconcileCallMutation.mutateAsync({ id: call.id });
+  };
+
+  const isActionLoading =
+    stopCallMutation.isPending || cancelCallMutation.isPending || reconcileCallMutation.isPending;
 
   return (
     <div
@@ -228,15 +264,30 @@ function ActiveCallCard({
           <div className="flex items-center gap-2">
             <span
               className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ${
-                isInProgress
-                  ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
-                  : "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                isStopPending
+                  ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                  : isStopAmbiguous
+                    ? "bg-rose-500/15 text-rose-600 dark:text-rose-400"
+                    : isUncertain
+                      ? "bg-purple-500/15 text-purple-600 dark:text-purple-400"
+                      : isInProgress
+                        ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                        : "bg-amber-500/15 text-amber-600 dark:text-amber-400"
               }`}
+              data-testid={`badge-call-status-${call.id}`}
             >
-              {isInProgress && (
+              {isInProgress && !isStopPending && !isStopAmbiguous && (
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
               )}
-              {call.status === "in_progress" ? "In Progress" : "Queued"}
+              {isStopPending
+                ? "Stopping..."
+                : isStopAmbiguous
+                  ? "Ending Pending (Ambiguous)"
+                  : isUncertain
+                    ? "Uncertain"
+                    : isInProgress
+                      ? "In Progress"
+                      : "Queued"}
             </span>
 
             <span className="inline-flex items-center gap-1 rounded-md bg-[hsl(var(--muted))] px-1.5 py-0.5 text-[11px] font-medium text-[hsl(var(--muted-foreground))]">
@@ -279,7 +330,69 @@ function ActiveCallCard({
       </div>
 
       {/* Action / Detail footer */}
-      <div className="pt-3 mt-2 border-t border-[hsl(var(--border))/0.6] flex justify-end">
+      <div className="pt-3 mt-2 border-t border-[hsl(var(--border))/0.6] flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          {isQueued && (
+            <button
+              onClick={handleStop}
+              disabled={isActionLoading}
+              className="px-2 py-1 text-xs font-medium rounded-md bg-rose-500/10 text-rose-600 hover:bg-rose-500/20 disabled:opacity-50"
+              data-testid={`button-cancel-call-${call.id}`}
+            >
+              Cancel Call
+            </button>
+          )}
+
+          {isInProgress && !isStopPending && !isStopAmbiguous && (
+            <button
+              onClick={handleStop}
+              disabled={isActionLoading}
+              className="px-2 py-1 text-xs font-medium rounded-md bg-rose-500/10 text-rose-600 hover:bg-rose-500/20 disabled:opacity-50"
+              data-testid={`button-stop-call-${call.id}`}
+            >
+              End Call
+            </button>
+          )}
+
+          {isStopPending && (
+            <span className="text-xs text-[hsl(var(--muted-foreground))] italic">
+              Termination pending...
+            </span>
+          )}
+
+          {isStopAmbiguous && (
+            <div className="flex items-center gap-1">
+              <button
+                onClick={handleReconcile}
+                disabled={isActionLoading}
+                className="px-2 py-1 text-xs font-medium rounded-md bg-amber-500/15 text-amber-600 hover:bg-amber-500/25 disabled:opacity-50"
+                data-testid={`button-reconcile-call-${call.id}`}
+              >
+                Reconcile
+              </button>
+              <button
+                onClick={handleForceStop}
+                disabled={isActionLoading}
+                className="px-2 py-1 text-xs font-medium rounded-md bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-50"
+                data-testid={`button-force-stop-call-${call.id}`}
+              >
+                Force Stop
+              </button>
+            </div>
+          )}
+
+          {isUncertain && !isStopAmbiguous && (
+            <button
+              onClick={handleReconcile}
+              disabled={isActionLoading}
+              className="px-2 py-1 text-xs font-medium rounded-md bg-purple-500/15 text-purple-600 hover:bg-purple-500/25 disabled:opacity-50"
+              data-testid={`button-reconcile-call-${call.id}`}
+            >
+              Reconcile State
+            </button>
+          )}
+        </div>
+
         <button
           onClick={onSelect}
           className="text-xs font-semibold text-[hsl(var(--primary))] hover:underline flex items-center gap-1"

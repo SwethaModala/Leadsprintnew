@@ -31,4 +31,6 @@ export interface ActiveCallDto {
   /** @nullable */
   duration_seconds: number | null;
   created_at: string;
+  stop_pending?: boolean;
+  stop_ambiguous?: boolean;
 }

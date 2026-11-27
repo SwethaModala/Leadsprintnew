@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { Router, type IRouter, type Request, type Response } from "express";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import {
   activitiesTable,
   appointmentsTable,
@@ -42,6 +42,7 @@ import {
   intakeIdempotencyKey,
 } from "../lib/callQueue";
 import { recordVoiceUsage, VOICE_COST_PER_MINUTE } from "../lib/usage";
+import { reconcileCallAndBillUnderLock } from "../lib/callBilling";
 import { tenantEventBus } from "../lib/eventBus";
 import { createWebhookLimiter } from "../middlewares/rateLimit";
 import { classifyUrgency, getProfile, isOutOfArea, validateDetails } from "../lib/verticals";
@@ -107,27 +108,36 @@ function rawBody(req: Request): Buffer {
   return (req as Request & { rawBody?: Buffer }).rawBody ?? Buffer.from(JSON.stringify(req.body ?? {}));
 }
 
-function eventId(req: Request, body: Record<string, unknown>): string {
+function eventId(req: Request, body: Record<string, unknown>, eventType?: string): string {
   const candidate =
     (typeof body.event_id === "string" && body.event_id) ||
-    (typeof body.id === "string" && body.id) ||
     req.get("x-event-id") ||
     undefined;
-  return candidate ?? crypto.createHash("sha256").update(rawBody(req)).digest("hex");
+  if (candidate) {
+    return eventType && !candidate.startsWith(`${eventType}_`) ? `${eventType}_${candidate}` : candidate;
+  }
+  const prefix = eventType ? `${eventType}_` : "";
+  if (typeof body.id === "string" && body.id) {
+    return `${prefix}${body.id}`;
+  }
+  return `${prefix}${crypto.createHash("sha256").update(rawBody(req)).digest("hex")}`;
 }
 
-async function acceptProviderEvent(input: {
-  businessId: string;
-  provider: string;
-  externalEventId: string;
-  eventType: string;
-  payload: Record<string, unknown>;
-}): Promise<boolean> {
+async function acceptProviderEvent(
+  input: {
+    businessId: string;
+    provider: string;
+    externalEventId: string;
+    eventType: string;
+    payload: Record<string, unknown>;
+  },
+  dbHandle: any = db,
+): Promise<boolean> {
   const payloadHash = crypto
     .createHash("sha256")
     .update(JSON.stringify(input.payload))
     .digest("hex");
-  const [created] = await db
+  const [created] = await dbHandle
     .insert(providerEventsTable)
     .values({
       id: `event_${crypto.randomUUID().slice(0, 12)}`,
@@ -558,171 +568,127 @@ router.post("/webhooks/retell", async (req, res): Promise<void> => {
     return;
   }
   const eventType = typeof body.event === "string" ? body.event : "call_update";
-  // Read the call row BEFORE archiving the event, so the usage accrual
-  // below can tell "this is the first terminal report for this call" from
-  // "this is a duplicate report of the same call".
-  const [callBefore] = await db
-    .select()
-    .from(callsTable)
-    .where(and(eq(callsTable.businessId, businessId), eq(callsTable.providerCallId, callId)));
-  const accepted = await acceptProviderEvent({ businessId, provider: "Retell", externalEventId: eventId(req, body), eventType, payload: body });
-  if (accepted) {
-    // Real Retell call_status values: registered | ongoing | ended | error.
-    // call_analyzed is a separate event (post-call analysis complete) that
-    // arrives after call_ended and carries the transcript/summary.
-    const status = typeof call.call_status === "string" ? call.call_status : "ended";
-    const terminal = eventType === "call_ended" || eventType === "call_analyzed" || status === "ended" || status === "error";
-    const duration = typeof call.duration_ms === "number" ? Math.round(call.duration_ms / 1000) : null;
+  const rawExtEventId = eventId(req, body, eventType);
+
+  let reconcileResult: { billed: boolean; status: string; callId?: string; isTerminal?: boolean } = {
+    billed: false,
+    status: "unmatched",
+  };
+
+  await db.transaction(async (tx) => {
+    // Standard lock hierarchy: 1. Lock call row
+    const [callRow] = await tx
+      .select()
+      .from(callsTable)
+      .where(and(eq(callsTable.businessId, businessId), eq(callsTable.providerCallId, callId)))
+      .for("update");
+
+    if (!callRow) {
+      // Unmatched path: call row does not exist yet.
+      // Store as unmatched_webhook with payload; on conflict (redelivery), safely update latest_retry_at.
+      const payloadHash = crypto.createHash("sha256").update(JSON.stringify(body)).digest("hex");
+      await tx
+        .insert(providerEventsTable)
+        .values({
+          id: `event_${crypto.randomUUID().slice(0, 12)}`,
+          businessId,
+          provider: "Retell",
+          externalEventId: rawExtEventId,
+          payloadHash,
+          eventType: "unmatched_webhook",
+          payload: {
+            ...body,
+            unmatched_call_id: callId,
+            received_at: new Date().toISOString(),
+          },
+          processedAt: new Date(),
+        })
+        .onConflictDoUpdate({
+          target: [
+            providerEventsTable.businessId,
+            providerEventsTable.provider,
+            providerEventsTable.externalEventId,
+          ],
+          set: {
+            payload: sql`jsonb_set(${providerEventsTable.payload}, '{latest_retry_at}', to_jsonb(${new Date().toISOString()}::text))`,
+          },
+          where: eq(providerEventsTable.eventType, "unmatched_webhook"),
+        });
+
+      return;
+    }
+
+    // Call row exists: record provider event idempotency
+    const accepted = await acceptProviderEvent(
+      {
+        businessId,
+        provider: "Retell",
+        externalEventId: rawExtEventId,
+        eventType,
+        payload: body,
+      },
+      tx,
+    );
+
+    if (!accepted) {
+      // Duplicate delivery of an already processed event
+      reconcileResult = { billed: false, status: callRow.status, callId: callRow.id };
+      return;
+    }
+
+    const startTimestampMs = typeof call.start_timestamp === "number" ? call.start_timestamp : undefined;
+    const endTimestampMs = typeof call.end_timestamp === "number" ? call.end_timestamp : undefined;
+    const durationMs = typeof call.duration_ms === "number" ? call.duration_ms : undefined;
     const disconnectionReason = typeof call.disconnection_reason === "string" ? call.disconnection_reason : undefined;
 
-    // A transfer was attempted if the agent's tool call requested one; Retell
-    // reports the outcome either as an explicit boolean or via disconnection
-    // reason. Treat ambiguous/failed transfer outcomes as "transfer failed",
-    // never as a silent success — per the safety rule that a failed transfer
-    // must become a message capture rather than disappear.
+    const res = await reconcileCallAndBillUnderLock(tx, {
+      callId: callRow.id,
+      businessId,
+      providerStatus: typeof call.call_status === "string" ? call.call_status : undefined,
+      startTimestampMs,
+      endTimestampMs,
+      durationMs,
+      disconnectionReason,
+      transcript: typeof call.transcript === "string" ? call.transcript : undefined,
+      analysis: typeof call.call_analysis === "string" ? call.call_analysis : undefined,
+      sourceEvent: `webhook:${eventType}`,
+    });
+
+    const isTerminal = res.status === "completed" || res.status === "failed";
+    reconcileResult = { billed: res.billed, status: res.status, callId: callRow.id, isTerminal };
+
+    // Transfer failure tracking
     const transferAttempted = call.transfer_attempted === true || typeof call.transfer_to_number === "string";
     const transferSucceeded = call.transferred === true || call.transfer_successful === true;
     const failedTransferReasons = ["dial_failed", "dial_no_answer", "dial_busy", "voicemail_reached", "transfer_failed"];
     const transferFailed = transferAttempted && !transferSucceeded && (disconnectionReason ? failedTransferReasons.includes(disconnectionReason) : true);
 
-    // A duration is billed exactly once per call. Retell reports the same
-    // talk time on `call_ended` AND again on `call_analyzed`, and those two
-    // payloads differ, so provider-event dedupe (keyed on the event hash)
-    // cannot collapse them — accruing on every event that carried a
-    // duration billed every call twice. Only the first terminal report for
-    // a call we actually placed may write usage.
-    const firstReportedDuration =
-      terminal && duration != null && callBefore != null && callBefore.durationSeconds == null;
-
-    await db.update(callsTable).set({
-      status: terminal ? (status === "error" ? "failed" : "completed") : "in_progress",
-      endedAt: terminal ? new Date() : undefined,
-      durationSeconds: duration ?? undefined,
-      providerCallId: callId,
-      transferred: transferAttempted ? transferSucceeded : undefined,
-      summary: typeof call.call_analysis === "string" ? call.call_analysis : undefined,
-      outcome: transferFailed
-        ? "Transfer failed — message captured for manual follow-up"
-        : disconnectionReason,
-      errorState: status === "error" ? "Retell reported a failed call" : transferFailed ? "transfer_failed" : undefined,
-    }).where(and(eq(callsTable.businessId, businessId), eq(callsTable.providerCallId, callId)));
-
-    const broadcastStatus = terminal ? (status === "error" ? "failed" : "completed") : "in_progress";
-    tenantEventBus.broadcast(businessId, "call_update", {
-      id: callBefore?.id ?? callId,
-      status: broadcastStatus,
-      duration_seconds: duration ?? null,
-      outcome: transferFailed
-        ? "Transfer failed — message captured for manual follow-up"
-        : (disconnectionReason ?? null),
-    });
-
-    if (firstReportedDuration) {
-      // Attributed to the current month's usage row (created on demand),
-      // never spread across periods by a bare business-wide update.
-      await recordVoiceUsage(db, businessId, duration / 60, VOICE_COST_PER_MINUTE);
-    }
-
-    if (transferFailed && callBefore) {
-      // Never expose the failure to the caller or silently drop it: log an
-      // operator-visible activity and flip the lead to a manual follow-up
-      // state so someone calls the person back.
-      await db.insert(activitiesTable).values({
+    if (transferFailed) {
+      await tx.insert(activitiesTable).values({
         id: `activity_${crypto.randomUUID().slice(0, 12)}`,
         businessId,
         type: "message",
         title: "Transfer failed — message captured",
         detail: `Call ${callId}: human transfer did not connect (${disconnectionReason ?? "unknown reason"}). Caller's message/callback request needs manual follow-up.`,
       });
-      await db.update(leadsTable).set({
-        nextAction: "Call back — transfer to human did not connect",
-        updatedAt: new Date(),
-      }).where(and(eq(leadsTable.id, callBefore.leadId), eq(leadsTable.businessId, businessId)));
+      await tx
+        .update(leadsTable)
+        .set({
+          nextAction: "Call back — transfer to human did not connect",
+          updatedAt: new Date(),
+        })
+        .where(and(eq(leadsTable.id, callRow.leadId), eq(leadsTable.businessId, businessId)));
     }
+  });
 
-    // Speed-to-lead SMS: when the lead didn't answer (voicemail or no-answer),
-    // send a follow-up SMS 2 minutes later so we stay in their attention window
-    // without hammering them immediately. The SMS is fire-and-forget — a failure
-    // is logged as a warning so the webhook still returns 202 and the call
-    // record is already written. Only fires if Twilio is configured for the
-    // business's market; silently skips otherwise.
-    const missedCallReasons = ["voicemail_reached", "dial_no_answer", "machine_detected"];
-    const wasMissedCall =
-      terminal &&
-      disconnectionReason != null &&
-      missedCallReasons.includes(disconnectionReason) &&
-      callBefore != null;
-
-    if (wasMissedCall) {
-      // Fetch the contact's phone and the business project name so the SMS
-      // is personalised — avoids a cold "we tried to call you" message.
-      const [contactRow] = await db
-        .select({ phone: contactsTable.phone, name: contactsTable.name })
-        .from(contactsTable)
-        .where(and(eq(contactsTable.id, callBefore!.contactId), eq(contactsTable.businessId, businessId)))
-        .limit(1);
-      const [businessRow] = await db
-        .select({ projectName: businessesTable.projectName, market: businessesTable.market })
-        .from(businessesTable)
-        .where(eq(businessesTable.id, businessId))
-        .limit(1);
-
-      if (contactRow && businessRow) {
-        const market = (businessRow.market === "IN" ? "IN" : "US") as "US" | "IN";
-        const firstName = contactRow.name.split(" ")[0] ?? contactRow.name;
-        const smsBody =
-          `Hi ${firstName}, we just tried calling about your enquiry for ${businessRow.projectName}. ` +
-          `Reply to this message or just call back when you're free — we'd love to help.`;
-
-        // Capture DB handle and businessId in closure so the setTimeout
-        // callback can still write the activity row after the request is done.
-        const dbHandle = db;
-        const capturedBusinessId = businessId;
-        const capturedCallId = callId;
-
-        // 2-minute delay: enough time that the lead has put the phone down
-        // and will actually read the SMS, but short enough to still feel instant.
-        setTimeout(async () => {
-          try {
-            let twilioCredentials: TwilioCredentialOverride | null = null;
-            try {
-              twilioCredentials = (await loadTenantProviderSecrets(dbHandle, capturedBusinessId, "twilio")) as TwilioCredentialOverride | null;
-            } catch {
-              twilioCredentials = null;
-            }
-            if (!hasTwilioSmsConfig(market, twilioCredentials)) {
-              req.log?.info?.(
-                { businessId: capturedBusinessId, callId: capturedCallId },
-                "Skipping missed-call SMS — Twilio not configured for market",
-              );
-              return;
-            }
-            const { messageSid } = await sendTwilioSms({
-              to: contactRow.phone,
-              body: smsBody,
-              market,
-              credentials: twilioCredentials,
-            });
-            await dbHandle.insert(activitiesTable).values({
-              id: `activity_${crypto.randomUUID().slice(0, 12)}`,
-              businessId: capturedBusinessId,
-              type: "message",
-              title: `SMS follow-up sent to ${contactRow.name}`,
-              detail: `Missed-call SMS dispatched (sid: ${messageSid}). Message: "${smsBody.slice(0, 100)}…"`,
-            });
-          } catch (err) {
-            // Non-fatal: the call record and usage are already written.
-            // Log so the operator can see it in monitoring.
-            req.log?.warn?.(
-              { businessId: capturedBusinessId, callId: capturedCallId, err },
-              "Missed-call SMS failed to send",
-            );
-          }
-        }, 2 * 60 * 1000);
-      }
-    }
+  if (reconcileResult.callId) {
+    tenantEventBus.broadcast(businessId, "call_update", {
+      id: reconcileResult.callId,
+      status: reconcileResult.status,
+    });
   }
-  res.status(202).json({ accepted: true, duplicate: !accepted });
+
+  res.status(202).json({ accepted: true, status: reconcileResult.status, billed: reconcileResult.billed });
 });
 
 router.post("/webhooks/twilio/status", async (req, res): Promise<void> => {

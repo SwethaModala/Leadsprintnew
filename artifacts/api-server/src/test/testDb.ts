@@ -303,6 +303,8 @@ ALTER TABLE calls ADD COLUMN transcript text;
 ALTER TABLE calls ADD COLUMN transcript_json jsonb;
 ALTER TABLE calls ADD COLUMN recording_url text;
 ALTER TABLE calls ADD COLUMN disconnection_reason text;
+ALTER TABLE calls ADD COLUMN connected_at timestamptz;
+ALTER TABLE calls ADD COLUMN metadata jsonb DEFAULT '{}'::jsonb;
 `;
 
 export async function createTestDb(): Promise<TestDb> {

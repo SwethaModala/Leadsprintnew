@@ -49,6 +49,8 @@ import {
   ImportLeadsResponse,
   StartCallBody,
   StartCallResponse,
+  StopCallBody,
+  StopCallParams,
   SuppressLeadBody,
   SuppressLeadParams,
   SuppressLeadResponse,
@@ -65,9 +67,12 @@ import {
   hasTwilioRoute,
   providerConfig,
   startRetellCall,
+  stopRetellCall,
+  getRetellCall,
   type CalcomCredentialOverride,
   type RetellCredentialOverride,
 } from "../lib/providers";
+import { reconcileCallAndBillUnderLock } from "../lib/callBilling";
 import { loadTenantProviderSecrets } from "../lib/security";
 import { evaluateCallPolicy, validateQuietHours } from "../lib/policy";
 import { getProfile, toApiProfile } from "../lib/verticals";
@@ -404,13 +409,15 @@ async function getActiveCallDto(row: typeof callsTable.$inferSelect) {
     if (agent) agentName = agent.name;
   }
 
+  const metadata = (row.metadata ?? {}) as Record<string, unknown>;
+
   return {
     id: row.id,
     lead_id: row.leadId && row.leadId !== "unknown" ? row.leadId : null,
     lead_name: contactName,
     phone,
     provider: row.provider,
-    status: (row.status === "in_progress" ? "in_progress" : "queued") as "in_progress" | "queued",
+    status: (row.status === "in_progress" || row.status === "uncertain" ? row.status : "queued") as "in_progress" | "queued" | "uncertain",
     direction: (row.direction === "inbound" ? "inbound" : "outbound") as "inbound" | "outbound",
     caller_number: row.callerNumber ?? null,
     destination_number: row.destinationNumber ?? null,
@@ -419,6 +426,8 @@ async function getActiveCallDto(row: typeof callsTable.$inferSelect) {
     started_at: iso(row.startedAt),
     duration_seconds: row.durationSeconds ?? null,
     created_at: row.createdAt.toISOString(),
+    stop_pending: Boolean(metadata.operator_stop_pending),
+    stop_ambiguous: Boolean(metadata.operator_stop_ambiguous),
   };
 }
 
@@ -576,7 +585,11 @@ router.get("/calls/active", requireRole(...READ_ROLES), async (req, res): Promis
     .where(
       and(
         eq(callsTable.businessId, BUSINESS_ID),
-        or(eq(callsTable.status, "in_progress"), eq(callsTable.status, "queued")),
+        or(
+          eq(callsTable.status, "in_progress"),
+          eq(callsTable.status, "queued"),
+          eq(callsTable.status, "uncertain"),
+        ),
       ),
     )
     .orderBy(desc(callsTable.createdAt));
@@ -685,6 +698,500 @@ router.post("/calls/start", requireRole(...OPERATIONS_ROLES), async (req, res): 
     outcome: current.outcome ?? null,
   });
   res.status(201).json(StartCallResponse.parse(await getCallDto(current)));
+});
+
+/**
+ * POST /calls/:id/cancel — cancels a queued call before provider dispatch.
+ */
+router.post("/calls/:id/cancel", requireRole(...OPERATIONS_ROLES), async (req, res): Promise<void> => {
+  const BUSINESS_ID = scopedBusinessId(req);
+  const callId = typeof req.params.id === "string" ? req.params.id : "";
+
+  const [cancelled] = await db
+    .update(callsTable)
+    .set({
+      status: "failed",
+      outcome: "Cancelled by operator",
+      disconnectionReason: "canceled",
+      endedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(callsTable.id, callId),
+        eq(callsTable.businessId, BUSINESS_ID),
+        eq(callsTable.status, "queued"),
+      ),
+    )
+    .returning();
+
+  if (!cancelled) {
+    const [current] = await db
+      .select()
+      .from(callsTable)
+      .where(and(eq(callsTable.id, callId), eq(callsTable.businessId, BUSINESS_ID)));
+    if (!current) {
+      res.status(404).json({ error: "Call not found" });
+      return;
+    }
+    res.status(409).json({
+      error: `Call cannot be cancelled because it is currently ${current.status}.`,
+    });
+    return;
+  }
+
+  // Also cancel any queued workflow job for this call
+  await db
+    .update(workflowJobsTable)
+    .set({ status: "failed" })
+    .where(
+      and(
+        eq(workflowJobsTable.businessId, BUSINESS_ID),
+        eq(workflowJobsTable.idempotencyKey, cancelled.idempotencyKey),
+        eq(workflowJobsTable.status, "queued"),
+      ),
+    );
+
+  await db.insert(activitiesTable).values({
+    id: id("activity"),
+    businessId: BUSINESS_ID,
+    type: "call",
+    title: "Queued call cancelled",
+    detail: `Call ${callId} was cancelled before provider dispatch.`,
+  });
+
+  res.json(await getCallDto(cancelled));
+});
+
+/**
+ * POST /calls/:id/stop — stops an active call at provider or cancels a queued call.
+ */
+router.post("/calls/:id/stop", requireRole(...OPERATIONS_ROLES), async (req, res): Promise<void> => {
+  const BUSINESS_ID = scopedBusinessId(req);
+  const params = StopCallParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+  const callId = params.data.id;
+
+  if (req.body === null || (req.body !== undefined && typeof req.body !== "object") || Array.isArray(req.body)) {
+    res.status(400).json({ error: "Malformed request body: expected an object" });
+    return;
+  }
+  const bodyParsed = StopCallBody.safeParse(req.body ?? {});
+  if (!bodyParsed.success) {
+    res.status(400).json({ error: bodyParsed.error.message });
+    return;
+  }
+  const forceRetry = bodyParsed.data.force_retry === true;
+
+  // Phase A: Short lock to validate state, cooldown, and claim durable stop attempt
+  let claimResult: {
+    kind: "terminal" | "cancel_queued" | "claim_granted";
+    status?: string;
+    call?: typeof callsTable.$inferSelect;
+    attemptNumber?: number;
+    providerCallId?: string;
+  };
+
+  try {
+    claimResult = await db.transaction(async (tx) => {
+      const [call] = await tx
+        .select()
+        .from(callsTable)
+        .where(and(eq(callsTable.id, callId), eq(callsTable.businessId, BUSINESS_ID)))
+        .for("update");
+
+      if (!call) {
+        throw new Error("NOT_FOUND");
+      }
+
+      if (call.status === "completed" || call.status === "failed") {
+        return { kind: "terminal", status: call.status };
+      }
+
+      if (call.status === "queued") {
+        // Cancel queued call directly
+        const [cancelled] = await tx
+          .update(callsTable)
+          .set({
+            status: "failed",
+            outcome: "Cancelled by operator",
+            disconnectionReason: "canceled",
+            endedAt: new Date(),
+          })
+          .where(eq(callsTable.id, call.id))
+          .returning();
+
+        return { kind: "cancel_queued", call: cancelled };
+      }
+
+      if (!call.providerCallId) {
+        throw new Error("NO_PROVIDER_CALL_ID");
+      }
+
+      // Check existing attempts for cooldown and pending lease
+      const [latestAttempt] = await tx
+        .select()
+        .from(providerEventsTable)
+        .where(
+          and(
+            eq(providerEventsTable.businessId, BUSINESS_ID),
+            eq(providerEventsTable.provider, "Retell"),
+            eq(providerEventsTable.eventType, "stop_call_attempt"),
+            sql`${providerEventsTable.payload}->>'call_id' = ${callId}`,
+          ),
+        )
+        .orderBy(desc(sql`(${providerEventsTable.payload}->>'attempt_number')::int`))
+        .limit(1);
+
+      if (latestAttempt) {
+        const payload = latestAttempt.payload as Record<string, unknown>;
+        const outcome = payload.outcome;
+        const attemptedAt = new Date(payload.attempted_at as string).getTime();
+
+        if (outcome === "pending" && Date.now() - attemptedAt < 10_000) {
+          throw new Error("STOP_IN_FLIGHT");
+        }
+
+        if (forceRetry) {
+          if (Date.now() - attemptedAt < 15_000) {
+            throw new Error("COOLDOWN_NOT_ELAPSED");
+          }
+        } else if (
+          outcome === "pending" ||
+          outcome === "accepted" ||
+          outcome === "ambiguous_5xx" ||
+          outcome === "timeout"
+        ) {
+          throw new Error("FORCE_RETRY_REQUIRED");
+        }
+      }
+
+      const nextAttemptNumber = latestAttempt
+        ? Number((latestAttempt.payload as Record<string, unknown>).attempt_number) + 1
+        : 1;
+
+      const attemptedAtIso = new Date().toISOString();
+      const rawExtEventId = `stop_attempt_${callId}_n${nextAttemptNumber}`;
+
+      await tx.insert(providerEventsTable).values({
+        id: `event_${crypto.randomUUID().slice(0, 12)}`,
+        businessId: BUSINESS_ID,
+        provider: "Retell",
+        externalEventId: rawExtEventId,
+        payloadHash: crypto.createHash("sha256").update(rawExtEventId).digest("hex"),
+        eventType: "stop_call_attempt",
+        payload: {
+          call_id: callId,
+          provider_call_id: call.providerCallId,
+          attempt_number: nextAttemptNumber,
+          attempted_at: attemptedAtIso,
+          outcome: "pending",
+          error_detail: null,
+        },
+        processedAt: new Date(),
+      });
+
+      return {
+        kind: "claim_granted",
+        call,
+        attemptNumber: nextAttemptNumber,
+        providerCallId: call.providerCallId,
+      };
+    });
+  } catch (err: any) {
+    if (err.message === "NOT_FOUND") {
+      res.status(404).json({ error: "Call not found" });
+      return;
+    }
+    if (err.message === "STOP_IN_FLIGHT") {
+      res.status(409).json({ error: "A stop request is currently in flight for this call." });
+      return;
+    }
+    if (err.message === "COOLDOWN_NOT_ELAPSED") {
+      res.status(400).json({ error: "Must wait at least 15 seconds before force retry." });
+      return;
+    }
+    if (err.message === "FORCE_RETRY_REQUIRED") {
+      res.status(409).json({
+        error: "Previous stop attempt was ambiguous. Requires force_retry after 15-second cooldown.",
+      });
+      return;
+    }
+    if (err.message === "NO_PROVIDER_CALL_ID") {
+      res.status(400).json({ error: "Call does not have an active provider session." });
+      return;
+    }
+    throw err;
+  }
+
+  if (claimResult.kind === "terminal") {
+    res.json({
+      call_id: callId,
+      status: claimResult.status,
+      message: "Call has already ended.",
+      stop_pending: false,
+      stop_ambiguous: false,
+    });
+    return;
+  }
+
+  if (claimResult.kind === "cancel_queued") {
+    res.json({
+      call_id: callId,
+      status: "failed",
+      message: "Queued call cancelled before provider dispatch.",
+      stop_pending: false,
+      stop_ambiguous: false,
+    });
+    return;
+  }
+
+  // Phase B: External HTTP Call (Zero Database Locks Held)
+  const tenantRetell = (await loadTenantProviderSecrets(
+    db,
+    BUSINESS_ID,
+    "retell",
+  )) as RetellCredentialOverride | null;
+
+  let httpStatus: number = 0;
+  let errorDetail: string | null = null;
+  let providerState: any = null;
+  let finalOutcome: "provider_already_ended" | "provider_failed" | "accepted" | "ambiguous_5xx" | "rejected";
+
+  if (forceRetry) {
+    try {
+      providerState = await getRetellCall(claimResult.providerCallId!, tenantRetell);
+      const retellStatus = providerState?.call_status;
+      if (retellStatus === "ended") {
+        finalOutcome = "provider_already_ended";
+      } else if (retellStatus === "not_connected" || retellStatus === "error") {
+        finalOutcome = "provider_failed";
+      } else if (retellStatus === "ongoing" || retellStatus === "registered") {
+        try {
+          const stopRes = await stopRetellCall(claimResult.providerCallId!, tenantRetell);
+          httpStatus = stopRes.status;
+          finalOutcome =
+            httpStatus === 204 || httpStatus === 200
+              ? "accepted"
+              : httpStatus >= 500
+                ? "ambiguous_5xx"
+                : "rejected";
+        } catch (stopErr: any) {
+          httpStatus = stopErr.status ?? 500;
+          errorDetail = stopErr.message ?? "Provider network failure on stop";
+          finalOutcome = httpStatus >= 500 ? "ambiguous_5xx" : "rejected";
+        }
+      } else {
+        // Unknown or unavailable provider state: preserve uncertain state and do not send stop
+        finalOutcome = "ambiguous_5xx";
+        errorDetail = `Unexpected provider call status: ${retellStatus}`;
+      }
+    } catch (getErr: any) {
+      // Unreachable / network failure getting provider state: preserve uncertain state and do not send stop
+      finalOutcome = "ambiguous_5xx";
+      errorDetail = getErr.message ?? "Provider network failure on get-call";
+    }
+  } else {
+    // Normal initial stop attempt
+    try {
+      const stopRes = await stopRetellCall(claimResult.providerCallId!, tenantRetell);
+      httpStatus = stopRes.status;
+      finalOutcome =
+        httpStatus === 204 || httpStatus === 200
+          ? "accepted"
+          : httpStatus >= 500
+            ? "ambiguous_5xx"
+            : "rejected";
+    } catch (err: any) {
+      httpStatus = err.status ?? 500;
+      errorDetail = err.message ?? "Provider network failure";
+      finalOutcome = httpStatus >= 500 ? "ambiguous_5xx" : "rejected";
+    }
+  }
+
+  // Phase C: Reacquire Lock & Resolve Outcome
+  let finalStatus = "in_progress";
+
+  await db.transaction(async (tx) => {
+    const [call] = await tx
+      .select()
+      .from(callsTable)
+      .where(and(eq(callsTable.id, callId), eq(callsTable.businessId, BUSINESS_ID)))
+      .for("update");
+
+    // Persist attempt outcome
+    await tx
+      .update(providerEventsTable)
+      .set({
+        payload: sql`jsonb_set(
+          jsonb_set(${providerEventsTable.payload}, '{outcome}', to_jsonb(${finalOutcome}::text)),
+          '{completed_at}', to_jsonb(${new Date().toISOString()}::text)
+        )`,
+      })
+      .where(
+        and(
+          eq(providerEventsTable.businessId, BUSINESS_ID),
+          eq(providerEventsTable.provider, "Retell"),
+          eq(providerEventsTable.eventType, "stop_call_attempt"),
+          eq(
+            providerEventsTable.externalEventId,
+            `stop_attempt_${callId}_n${claimResult.attemptNumber}`,
+          ),
+        ),
+      );
+
+    if (!call) return;
+
+    if (finalOutcome === "provider_already_ended") {
+      const res = await reconcileCallAndBillUnderLock(tx, {
+        callId: call.id,
+        businessId: BUSINESS_ID,
+        providerStatus: "ended",
+        startTimestampMs: providerState?.start_timestamp,
+        endTimestampMs: providerState?.end_timestamp,
+        durationMs: providerState?.duration_ms,
+        disconnectionReason: providerState?.disconnection_reason,
+        transcript: providerState?.transcript,
+        analysis: providerState?.call_analysis,
+        sourceEvent: "stop:provider_already_ended",
+      });
+      finalStatus = res.status;
+      return;
+    }
+
+    if (finalOutcome === "provider_failed") {
+      const res = await reconcileCallAndBillUnderLock(tx, {
+        callId: call.id,
+        businessId: BUSINESS_ID,
+        providerStatus: providerState?.call_status ?? "error",
+        startTimestampMs: providerState?.start_timestamp,
+        endTimestampMs: providerState?.end_timestamp,
+        durationMs: providerState?.duration_ms,
+        disconnectionReason: providerState?.disconnection_reason ?? "error",
+        transcript: providerState?.transcript,
+        analysis: providerState?.call_analysis,
+        sourceEvent: "stop:provider_failed",
+      });
+      finalStatus = res.status;
+      return;
+    }
+
+    if (call.status === "completed" || call.status === "failed") {
+      finalStatus = call.status;
+      return;
+    }
+
+    const currentMeta = (call.metadata ?? {}) as Record<string, unknown>;
+    const isStopPending = finalOutcome === "accepted";
+    const isStopAmbiguous = finalOutcome === "ambiguous_5xx";
+
+    await tx
+      .update(callsTable)
+      .set({
+        metadata: {
+          ...currentMeta,
+          operator_stop_pending: isStopPending,
+          operator_stop_ambiguous: isStopAmbiguous,
+        },
+      })
+      .where(eq(callsTable.id, call.id));
+
+    finalStatus = call.status;
+  });
+
+  res.json({
+    call_id: callId,
+    status: finalStatus,
+    message:
+      finalOutcome === "provider_already_ended"
+        ? "Provider confirmed call already ended."
+        : finalOutcome === "provider_failed"
+          ? "Provider confirmed call already failed/not connected."
+          : finalOutcome === "accepted"
+            ? "Stop command accepted by Retell. Call termination pending webhook."
+            : finalOutcome === "ambiguous_5xx"
+              ? "Stop command timed out or provider error. Call remains active/uncertain."
+              : `Stop request rejected by Retell: ${errorDetail ?? "unknown"}`,
+    stop_pending: finalOutcome === "accepted",
+    stop_ambiguous: finalOutcome === "ambiguous_5xx",
+  });
+});
+
+/**
+ * POST /calls/:id/reconcile — force authoritative Retell state sync and billing evaluation.
+ */
+router.post("/calls/:id/reconcile", requireRole(...OPERATIONS_ROLES), async (req, res): Promise<void> => {
+  const BUSINESS_ID = scopedBusinessId(req);
+  const callId = typeof req.params.id === "string" ? req.params.id : "";
+
+  // Phase A: Short lock to ensure call exists and is not already terminal
+  const initial = await db.transaction(async (tx) => {
+    const [call] = await tx
+      .select()
+      .from(callsTable)
+      .where(and(eq(callsTable.id, callId), eq(callsTable.businessId, BUSINESS_ID)))
+      .for("update");
+    if (!call) return null;
+    return { providerCallId: call.providerCallId, status: call.status };
+  });
+
+  if (!initial) {
+    res.status(404).json({ error: "Call not found" });
+    return;
+  }
+  if (initial.status === "completed" || initial.status === "failed") {
+    res.json({
+      call_id: callId,
+      status: initial.status,
+      billed: false,
+      message: "Call is already terminal.",
+    });
+    return;
+  }
+  if (!initial.providerCallId) {
+    res.status(400).json({ error: "Call does not have an active provider session." });
+    return;
+  }
+
+  // Phase B: Query Retell Get Call (Zero Database Locks Held)
+  const tenantRetell = (await loadTenantProviderSecrets(
+    db,
+    BUSINESS_ID,
+    "retell",
+  )) as RetellCredentialOverride | null;
+
+  let providerData: any;
+  try {
+    providerData = await getRetellCall(initial.providerCallId, tenantRetell);
+  } catch (err: any) {
+    res.status(502).json({ error: `Provider reconciliation failed: ${err.message}` });
+    return;
+  }
+
+  // Phase C: Mandatory transaction boundary to reconcile state and claim billing
+  const result = await db.transaction(async (tx) => {
+    return await reconcileCallAndBillUnderLock(tx, {
+      callId,
+      businessId: BUSINESS_ID,
+      providerStatus: providerData.call_status,
+      startTimestampMs: providerData.start_timestamp,
+      endTimestampMs: providerData.end_timestamp,
+      durationMs: providerData.duration_ms,
+      disconnectionReason: providerData.disconnection_reason,
+      transcript: providerData.transcript ?? null,
+      analysis: providerData.call_analysis ?? null,
+      sourceEvent: "operator_reconciliation",
+    });
+  });
+
+  res.json({
+    call_id: callId,
+    status: result.status,
+    billed: result.billed,
+    message: `Call reconciled to ${result.status}.`,
+  });
 });
 
 /**

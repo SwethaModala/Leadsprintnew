@@ -33,6 +33,7 @@ import type {
   AuditLogsResponse,
   AuthSession,
   AvailabilityInput,
+  BadRequestResponse,
   BusinessSettings,
   BusinessSettingsUpdate,
   Call,
@@ -65,6 +66,7 @@ import type {
   ProviderCredentialListResponse,
   PublishAgentResult,
   ReadinessStatus,
+  ReconcileCallResult,
   RemoveTeamMemberResult,
   RetellLinkRequest,
   RetellLinkResult,
@@ -73,6 +75,8 @@ import type {
   RevokeApiKeyResult,
   Slot,
   StartCallInput,
+  StopCallRequest,
+  StopCallResult,
   SuppressionInput,
   SwitchOrganizationRequest,
   TeamInvitationResponse,
@@ -1345,6 +1349,220 @@ export function useGetCall<TData = Awaited<ReturnType<typeof getCall>>, TError =
 
 
 
+
+export const getStopCallUrl = (id: string,) => {
+
+
+
+
+  return `/api/calls/${id}/stop`
+}
+
+/**
+ * @summary Stop an active call at provider or cancel a queued call
+ */
+export const stopCall = async (id: string,
+    stopCallRequest?: StopCallRequest, options?: Parameters<typeof customFetch>[1]): Promise<StopCallResult> => {
+
+  return customFetch<StopCallResult>(getStopCallUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(stopCallRequest)
+  }
+);}
+
+
+
+
+
+export const getStopCallMutationOptions = <TError = ErrorType<BadRequestResponse | NotFoundResponse | Error>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof stopCall>>, TError,{id: string;data?: BodyType<StopCallRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof stopCall>>, TError,{id: string;data?: BodyType<StopCallRequest>}, TContext> => {
+
+const mutationKey = ['stopCall'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof stopCall>>, {id: string;data?: BodyType<StopCallRequest>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  stopCall(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type StopCallMutationResult = NonNullable<Awaited<ReturnType<typeof stopCall>>>
+    export type StopCallMutationBody = BodyType<StopCallRequest> | undefined
+    export type StopCallMutationError = ErrorType<BadRequestResponse | NotFoundResponse | Error>
+
+    /**
+ * @summary Stop an active call at provider or cancel a queued call
+ */
+export const useStopCall = <TError = ErrorType<BadRequestResponse | NotFoundResponse | Error>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof stopCall>>, TError,{id: string;data?: BodyType<StopCallRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof stopCall>>,
+        TError,
+        {id: string;data?: BodyType<StopCallRequest>},
+        TContext
+      > => {
+      return useMutation(getStopCallMutationOptions(options));
+    }
+
+export const getReconcileCallUrl = (id: string,) => {
+
+
+
+
+  return `/api/calls/${id}/reconcile`
+}
+
+/**
+ * @summary Force authoritative provider reconciliation for a call
+ */
+export const reconcileCall = async (id: string, options?: Parameters<typeof customFetch>[1]): Promise<ReconcileCallResult> => {
+
+  return customFetch<ReconcileCallResult>(getReconcileCallUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getReconcileCallMutationOptions = <TError = ErrorType<NotFoundResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reconcileCall>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof reconcileCall>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['reconcileCall'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof reconcileCall>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  reconcileCall(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ReconcileCallMutationResult = NonNullable<Awaited<ReturnType<typeof reconcileCall>>>
+
+    export type ReconcileCallMutationError = ErrorType<NotFoundResponse>
+
+    /**
+ * @summary Force authoritative provider reconciliation for a call
+ */
+export const useReconcileCall = <TError = ErrorType<NotFoundResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reconcileCall>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof reconcileCall>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getReconcileCallMutationOptions(options));
+    }
+
+export const getCancelQueuedCallUrl = (id: string,) => {
+
+
+
+
+  return `/api/calls/${id}/cancel`
+}
+
+/**
+ * @summary Cancel a queued call before provider dispatch
+ */
+export const cancelQueuedCall = async (id: string, options?: Parameters<typeof customFetch>[1]): Promise<Call> => {
+
+  return customFetch<Call>(getCancelQueuedCallUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getCancelQueuedCallMutationOptions = <TError = ErrorType<NotFoundResponse | Error>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelQueuedCall>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof cancelQueuedCall>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['cancelQueuedCall'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof cancelQueuedCall>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  cancelQueuedCall(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CancelQueuedCallMutationResult = NonNullable<Awaited<ReturnType<typeof cancelQueuedCall>>>
+
+    export type CancelQueuedCallMutationError = ErrorType<NotFoundResponse | Error>
+
+    /**
+ * @summary Cancel a queued call before provider dispatch
+ */
+export const useCancelQueuedCall = <TError = ErrorType<NotFoundResponse | Error>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelQueuedCall>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof cancelQueuedCall>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getCancelQueuedCallMutationOptions(options));
+    }
 
 export const getRetryCallUrl = (id: string,) => {
 

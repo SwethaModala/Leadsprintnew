@@ -25,7 +25,7 @@ import { db as defaultDb, usageTable } from "@workspace/db";
  * and tests keep injecting through a single seam.
  */
 
-type DbHandle = typeof defaultDb;
+export type DbHandle = typeof defaultDb | Parameters<Parameters<typeof defaultDb.transaction>[0]>[0] | any;
 type UsageRow = typeof usageTable.$inferSelect;
 
 export interface PeriodBounds {

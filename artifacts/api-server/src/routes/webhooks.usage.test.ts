@@ -79,6 +79,8 @@ function callEnded(overrides: Record<string, unknown> = {}) {
     call: {
       call_id: PROVIDER_CALL_ID,
       call_status: "ended",
+      start_timestamp: 1720000000000,
+      end_timestamp: 1720000060000,
       duration_ms: 60_000,
       disconnection_reason: "agent_hangup",
       metadata: { business_id: BUSINESS_ID, lead_id: "lead_billed", call_id: "call_row_billed" },
@@ -93,6 +95,8 @@ function callAnalyzed(overrides: Record<string, unknown> = {}) {
     call: {
       call_id: PROVIDER_CALL_ID,
       call_status: "ended",
+      start_timestamp: 1720000000000,
+      end_timestamp: 1720000060000,
       duration_ms: 60_000,
       disconnection_reason: "agent_hangup",
       call_analysis: "Buyer is looking for a two-bedroom in Williamsburg.",
@@ -201,8 +205,8 @@ describe("Retell webhook usage accounting", () => {
   it("still reconciles the call row when it is ours", async () => {
     await postRetell(callEnded({ disconnection_reason: "dial_no_answer", transferred: false }));
     const [call] = await db.select().from(callsTable).where(eq(callsTable.id, "call_row_billed"));
-    expect(call?.status).toBe("completed");
+    expect(call?.status).toBe("failed");
     expect(call?.endedAt).not.toBeNull();
-    expect(call?.outcome).toBe("dial_no_answer");
+    expect(call?.disconnectionReason).toBe("dial_no_answer");
   });
 });

@@ -12,4 +12,5 @@ export type ActiveCallDtoStatus = typeof ActiveCallDtoStatus[keyof typeof Active
 export const ActiveCallDtoStatus = {
   queued: 'queued',
   in_progress: 'in_progress',
+  uncertain: 'uncertain',
 } as const;

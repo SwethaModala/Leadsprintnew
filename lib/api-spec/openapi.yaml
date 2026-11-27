@@ -303,6 +303,74 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Call"
+  /calls/{id}/stop:
+    post:
+      operationId: stopCall
+      tags: [calls]
+      summary: Stop an active call at provider or cancel a queued call
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StopCallRequest"
+      responses:
+        "200":
+          description: Call stopped or pending stop
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StopCallResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Conflict (e.g. stop in flight or terminal state)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /calls/{id}/reconcile:
+    post:
+      operationId: reconcileCall
+      tags: [calls]
+      summary: Force authoritative provider reconciliation for a call
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Reconciliation complete
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReconcileCallResult"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /calls/{id}/cancel:
+    post:
+      operationId: cancelQueuedCall
+      tags: [calls]
+      summary: Cancel a queued call before provider dispatch
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Call cancelled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Call"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Call is not queued or cannot be cancelled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /calls/{id}/retry:
     post:
       operationId: retryCall
@@ -1161,6 +1229,12 @@ components:
       schema:
         type: string
   responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
     NotFound:
       description: Resource not found
       content:
@@ -1418,7 +1492,7 @@ components:
         lead_name: { type: ["string", "null"] }
         phone: { type: string }
         provider: { type: string }
-        status: { type: string, enum: [queued, in_progress] }
+        status: { type: string, enum: [queued, in_progress, uncertain] }
         direction: { type: string, enum: [inbound, outbound] }
         caller_number: { type: ["string", "null"] }
         destination_number: { type: ["string", "null"] }
@@ -1427,12 +1501,38 @@ components:
         started_at: { type: ["string", "null"] }
         duration_seconds: { type: ["number", "null"] }
         created_at: { type: string }
+        stop_pending: { type: boolean }
+        stop_ambiguous: { type: boolean }
       required: [id, lead_id, lead_name, phone, provider, status, direction, caller_number, destination_number, agent_id, agent_name, started_at, duration_seconds, created_at]
     StartCallInput:
       type: object
       properties:
         lead_id: { type: string }
       required: [lead_id]
+    StopCallRequest:
+      type: object
+      properties:
+        force_retry:
+          type: boolean
+          default: false
+      additionalProperties: false
+    StopCallResult:
+      type: object
+      properties:
+        call_id: { type: string }
+        status: { type: string }
+        message: { type: string }
+        stop_pending: { type: boolean }
+        stop_ambiguous: { type: boolean }
+      required: [call_id, status, message]
+    ReconcileCallResult:
+      type: object
+      properties:
+        call_id: { type: string }
+        status: { type: string }
+        billed: { type: boolean }
+        message: { type: string }
+      required: [call_id, status, billed]
     Appointment:
       type: object
       properties:

@@ -175,6 +175,76 @@ export async function startRetellCall(input: {
   return { callId: body.call_id };
 }
 
+export interface RetellCallDetails {
+  call_id: string;
+  call_status: "registered" | "ongoing" | "ended" | "error" | string;
+  start_timestamp?: number;
+  end_timestamp?: number;
+  duration_ms?: number;
+  disconnection_reason?: string;
+  transcript?: string;
+  call_analysis?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export async function stopRetellCall(
+  callId: string,
+  credentials?: RetellCredentialOverride | null,
+): Promise<{ status: number; message: string }> {
+  const base = providerConfig().retell;
+  const cred = credentials ?? undefined;
+  const apiKey = cred !== undefined ? cred.api_key : base.apiKey;
+  const apiUrl = cred?.api_url ?? base.apiUrl;
+  const values = requireValues("Retell", { apiKey });
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+  try {
+    const response = await fetch(`${apiUrl}/v2/stop-call/${encodeURIComponent(callId)}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${values.apiKey}`,
+      },
+      signal: controller.signal,
+    });
+    if (response.status === 204 || response.status === 200) {
+      return { status: response.status, message: "Stop command accepted" };
+    }
+    const raw = await response.text();
+    throw new ProviderRequestError(`Retell stop returned ${response.status}: ${raw.slice(0, 300)}`, response.status);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+export async function getRetellCall(
+  callId: string,
+  credentials?: RetellCredentialOverride | null,
+): Promise<RetellCallDetails> {
+  const base = providerConfig().retell;
+  const cred = credentials ?? undefined;
+  const apiKey = cred !== undefined ? cred.api_key : base.apiKey;
+  const apiUrl = cred?.api_url ?? base.apiUrl;
+  const values = requireValues("Retell", { apiKey });
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+  try {
+    const response = await fetch(`${apiUrl}/v2/get-call/${encodeURIComponent(callId)}`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${values.apiKey}`,
+      },
+      signal: controller.signal,
+    });
+    return await parseProviderResponse<RetellCallDetails>(response, "Retell");
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 export function hasRetellConfigForMarket(
   market?: "US" | "IN",
   credentials?: RetellCredentialOverride | null,
