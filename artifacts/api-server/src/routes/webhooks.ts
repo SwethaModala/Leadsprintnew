@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { Router, type IRouter, type Request, type Response } from "express";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, or, sql } from "drizzle-orm";
 import {
   activitiesTable,
   appointmentsTable,
@@ -150,12 +150,19 @@ async function acceptProviderEvent(
       payload: input.payload,
       processedAt: new Date(),
     })
-    .onConflictDoNothing({
+    .onConflictDoUpdate({
       target: [
         providerEventsTable.businessId,
         providerEventsTable.provider,
         providerEventsTable.externalEventId,
       ],
+      set: {
+        eventType: input.eventType,
+        payload: input.payload,
+        payloadHash,
+        processedAt: new Date(),
+      },
+      where: eq(providerEventsTable.eventType, "unmatched_webhook"),
     })
     .returning({ id: providerEventsTable.id });
   return Boolean(created);
@@ -904,16 +911,27 @@ router.post("/webhooks/calcom", async (req, res): Promise<void> => {
   const businessId = typeof metadata.business_id === "string" ? metadata.business_id : "";
 
   let tenantCalcom: CalcomCredentialOverride | null = null;
+  let tenantHasCredentials = false;
   if (businessId) {
     try {
       tenantCalcom = (await loadTenantProviderSecrets(db, businessId, "calcom")) as CalcomCredentialOverride | null;
+      if (tenantCalcom !== null) {
+        tenantHasCredentials = true;
+      }
     } catch {
       res.status(401).json({ error: "Invalid Cal.com signature" });
       return;
     }
   }
-  const calcomSecret = tenantCalcom?.webhook_secret ?? config.calcom.webhookSecret;
-  if (!verifyCalSignature(rawBody(req), req.get("x-cal-signature-256"), calcomSecret)) {
+
+  // If a tenant credential record exists, verify signatures ONLY with that tenant's decrypted webhook_secret.
+  // If the secret is missing or empty, fail closed (never fall back to global secret).
+  // Use global platform secret ONLY when no tenant Cal.com credential record exists at all.
+  const calcomSecret = tenantHasCredentials
+    ? (tenantCalcom?.webhook_secret?.trim() || undefined)
+    : config.calcom.webhookSecret;
+
+  if (!calcomSecret || !verifyCalSignature(rawBody(req), req.get("x-cal-signature-256"), calcomSecret)) {
     res.status(401).json({ error: "Invalid Cal.com signature" });
     return;
   }
@@ -931,30 +949,176 @@ router.post("/webhooks/calcom", async (req, res): Promise<void> => {
     return;
   }
   const triggerEvent = typeof body.triggerEvent === "string" ? body.triggerEvent : "booking";
-  const accepted = await acceptProviderEvent({ businessId, provider: "Cal.com", externalEventId: eventId(req, body), eventType: triggerEvent, payload: body });
-  if (accepted) {
-    // A webhook that only archives the event never updates the console —
-    // the appointment row itself has to reflect cancellation/reschedule,
-    // or the operator keeps seeing a confirmed appointment that no longer
-    // exists on the actual calendar.
-    const externalId = typeof payload.uid === "string" ? payload.uid : typeof payload.bookingId !== "undefined" ? String(payload.bookingId) : "";
-    if (externalId) {
-      if (triggerEvent === "BOOKING_CANCELLED") {
-        await db.update(appointmentsTable).set({ status: "cancelled" }).where(and(eq(appointmentsTable.businessId, businessId), eq(appointmentsTable.externalId, externalId)));
-      } else if (triggerEvent === "BOOKING_RESCHEDULED") {
-        const startTime = typeof payload.startTime === "string" ? new Date(payload.startTime) : undefined;
-        const endTime = typeof payload.endTime === "string" ? new Date(payload.endTime) : undefined;
-        await db.update(appointmentsTable).set({
-          startTime,
-          endTime,
-          // If Cal.com didn't include the new times in this payload, don't
-          // silently keep showing the old time as confirmed — force a look.
-          status: startTime && endTime ? "confirmed" : "needs_review",
-        }).where(and(eq(appointmentsTable.businessId, businessId), eq(appointmentsTable.externalId, externalId)));
+  const rawExtEventId = eventId(req, body, triggerEvent);
+
+  const newUid =
+    typeof payload.uid === "string"
+      ? payload.uid.trim()
+      : typeof payload.bookingId !== "undefined"
+        ? String(payload.bookingId).trim()
+        : "";
+
+  const rescheduleUid =
+    typeof payload.rescheduleUid === "string" && payload.rescheduleUid.trim()
+      ? payload.rescheduleUid.trim()
+      : typeof (payload as any).rescheduledFrom === "string" && (payload as any).rescheduledFrom.trim()
+        ? (payload as any).rescheduledFrom.trim()
+        : undefined;
+
+  const targetExternalId = triggerEvent === "BOOKING_RESCHEDULED" ? (rescheduleUid ?? newUid) : newUid;
+
+  let reconcileResult: { accepted: boolean; duplicate: boolean; status: string } = {
+    accepted: true,
+    duplicate: false,
+    status: "processed",
+  };
+
+  await db.transaction(async (tx) => {
+    // 1. If targetExternalId is present and event modifies an appointment, query the appointment row with lock
+    if (targetExternalId && (triggerEvent === "BOOKING_RESCHEDULED" || triggerEvent === "BOOKING_CANCELLED")) {
+      const matchCondition =
+        triggerEvent === "BOOKING_RESCHEDULED" && rescheduleUid
+          ? or(
+              eq(appointmentsTable.externalId, rescheduleUid),
+              eq(appointmentsTable.externalId, newUid),
+            )
+          : eq(appointmentsTable.externalId, targetExternalId);
+
+      const [appointment] = await tx
+        .select()
+        .from(appointmentsTable)
+        .where(
+          and(
+            eq(appointmentsTable.businessId, businessId),
+            matchCondition,
+          ),
+        )
+        .for("update");
+
+      if (!appointment) {
+        // Unmatched path: appointment does not exist under this tenant.
+        // Store as unmatched_webhook with payload; on conflict (redelivery), safely update latest_retry_at.
+        const payloadHash = crypto.createHash("sha256").update(JSON.stringify(body)).digest("hex");
+        await tx
+          .insert(providerEventsTable)
+          .values({
+            id: `event_${crypto.randomUUID().slice(0, 12)}`,
+            businessId,
+            provider: "Cal.com",
+            externalEventId: rawExtEventId,
+            payloadHash,
+            eventType: "unmatched_webhook",
+            payload: {
+              ...body,
+              unmatched_external_id: targetExternalId,
+              received_at: new Date().toISOString(),
+            },
+            processedAt: null,
+          })
+          .onConflictDoUpdate({
+            target: [
+              providerEventsTable.businessId,
+              providerEventsTable.provider,
+              providerEventsTable.externalEventId,
+            ],
+            set: {
+              payload: sql`jsonb_set(${providerEventsTable.payload}, '{latest_retry_at}', to_jsonb(${new Date().toISOString()}::text))`,
+            },
+            where: eq(providerEventsTable.eventType, "unmatched_webhook"),
+          });
+
+        reconcileResult = { accepted: true, duplicate: false, status: "unmatched" };
+        return;
       }
+
+      // Appointment row exists: record provider event idempotency under transaction
+      const accepted = await acceptProviderEvent(
+        {
+          businessId,
+          provider: "Cal.com",
+          externalEventId: rawExtEventId,
+          eventType: triggerEvent,
+          payload: body,
+        },
+        tx,
+      );
+
+      if (!accepted) {
+        // Duplicate delivery of an already processed event
+        reconcileResult = { accepted: true, duplicate: true, status: appointment.status };
+        return;
+      }
+
+      if (triggerEvent === "BOOKING_CANCELLED") {
+        await tx
+          .update(appointmentsTable)
+          .set({ status: "cancelled" })
+          .where(
+            and(
+              eq(appointmentsTable.id, appointment.id),
+              eq(appointmentsTable.businessId, businessId),
+            ),
+          );
+        reconcileResult = { accepted: true, duplicate: false, status: "cancelled" };
+      } else if (triggerEvent === "BOOKING_RESCHEDULED") {
+        const rawStart = typeof payload.startTime === "string" ? payload.startTime : undefined;
+        const rawEnd = typeof payload.endTime === "string" ? payload.endTime : undefined;
+        const parsedStart = rawStart ? new Date(rawStart) : null;
+        const parsedEnd = rawEnd ? new Date(rawEnd) : null;
+
+        const validDates =
+          parsedStart !== null &&
+          parsedEnd !== null &&
+          !isNaN(parsedStart.getTime()) &&
+          !isNaN(parsedEnd.getTime());
+        const validOrder = validDates && parsedEnd!.getTime() > parsedStart!.getTime();
+
+        // Monotonicity: a delayed reschedule must never change a cancelled appointment back to confirmed
+        const nextStatus =
+          appointment.status === "cancelled"
+            ? "cancelled"
+            : validDates && validOrder
+              ? "confirmed"
+              : "needs_review";
+
+        await tx
+          .update(appointmentsTable)
+          .set({
+            startTime: validDates ? parsedStart! : appointment.startTime,
+            endTime: validDates && validOrder ? parsedEnd! : appointment.endTime,
+            externalId: newUid || appointment.externalId,
+            status: nextStatus,
+          })
+          .where(
+            and(
+              eq(appointmentsTable.id, appointment.id),
+              eq(appointmentsTable.businessId, businessId),
+            ),
+          );
+
+        reconcileResult = { accepted: true, duplicate: false, status: nextStatus };
+      }
+    } else {
+      // Other events (e.g. BOOKING_CREATED) or events without targetExternalId: record provider event idempotency
+      const accepted = await acceptProviderEvent(
+        {
+          businessId,
+          provider: "Cal.com",
+          externalEventId: rawExtEventId,
+          eventType: triggerEvent,
+          payload: body,
+        },
+        tx,
+      );
+      reconcileResult = { accepted: true, duplicate: !accepted, status: "accepted" };
     }
-  }
-  res.status(202).json({ accepted: true, duplicate: !accepted });
+  });
+
+  res.status(202).json({
+    accepted: reconcileResult.accepted,
+    duplicate: reconcileResult.duplicate,
+    status: reconcileResult.status,
+  });
 });
 
 export default router;
