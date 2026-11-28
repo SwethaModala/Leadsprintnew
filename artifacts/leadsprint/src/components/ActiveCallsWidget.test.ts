@@ -44,4 +44,35 @@ describe("ActiveCallsWidget helper functions", () => {
       expect(elapsed).toBeLessThanOrEqual(32);
     });
   });
+
+  describe("canMonitorCall guard conditions", () => {
+    function canMonitorCall(call: {
+      status: string;
+      stop_pending?: boolean | null;
+      stop_ambiguous?: boolean | null;
+    }): boolean {
+      return (
+        call.status === "in_progress" &&
+        !Boolean(call.stop_pending) &&
+        !Boolean(call.stop_ambiguous)
+      );
+    }
+
+    it("allows monitoring for active in_progress calls without termination flags", () => {
+      expect(canMonitorCall({ status: "in_progress" })).toBe(true);
+      expect(canMonitorCall({ status: "in_progress", stop_pending: false, stop_ambiguous: false })).toBe(true);
+    });
+
+    it("disallows monitoring for queued or uncertain calls", () => {
+      expect(canMonitorCall({ status: "queued" })).toBe(false);
+      expect(canMonitorCall({ status: "uncertain" })).toBe(false);
+      expect(canMonitorCall({ status: "completed" })).toBe(false);
+      expect(canMonitorCall({ status: "failed" })).toBe(false);
+    });
+
+    it("disallows monitoring when stop_pending or stop_ambiguous is active", () => {
+      expect(canMonitorCall({ status: "in_progress", stop_pending: true })).toBe(false);
+      expect(canMonitorCall({ status: "in_progress", stop_ambiguous: true })).toBe(false);
+    });
+  });
 });

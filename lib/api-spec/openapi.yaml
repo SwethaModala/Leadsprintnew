@@ -371,6 +371,31 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /calls/{id}/monitor-stream:
+    get:
+      operationId: streamCallTranscript
+      tags: [calls]
+      summary: Stream live call transcript via SSE
+      description: Server-Sent Events stream delivering real-time transcript and tool events for an in-progress call.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: SSE event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          description: Too many concurrent monitoring sessions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /calls/{id}/retry:
     post:
       operationId: retryCall

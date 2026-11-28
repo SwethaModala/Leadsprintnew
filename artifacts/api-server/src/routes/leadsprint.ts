@@ -73,7 +73,9 @@ import {
   type RetellCredentialOverride,
 } from "../lib/providers";
 import { reconcileCallAndBillUnderLock } from "../lib/callBilling";
+import { callMonitorManager } from "../lib/callMonitor";
 import { loadTenantProviderSecrets } from "../lib/security";
+import { EncryptionNotConfiguredError } from "../lib/crypto";
 import { evaluateCallPolicy, validateQuietHours } from "../lib/policy";
 import { getProfile, toApiProfile } from "../lib/verticals";
 import { demoVerticalIsHomeServices, seedHomeServicesDemo } from "../lib/demoSeedHomeServices";
@@ -760,6 +762,97 @@ router.post("/calls/:id/cancel", requireRole(...OPERATIONS_ROLES), async (req, r
   });
 
   res.json(await getCallDto(cancelled));
+});
+
+/**
+ * Resolves the Retell API key for a tenant under strict fail-closed multi-tenant rules:
+ * - If the tenant has saved credentials, use only that tenant's decrypted API key.
+ * - If tenant credentials exist but the API key is missing or decryption fails, fail closed.
+ * - Never fall back to the global Retell key when tenant credentials exist.
+ * - Global platform fallback is only permitted for pilot/single-tenant workspaces without stored credentials,
+ *   or when encryption is unconfigured.
+ */
+export async function resolveTenantRetellApiKey(
+  database: typeof defaultDb,
+  businessId: string,
+): Promise<string | undefined> {
+  try {
+    const secrets = await loadTenantProviderSecrets(database, businessId, "retell");
+    if (secrets !== null) {
+      return (secrets as Record<string, string | undefined>).api_key ?? undefined;
+    }
+  } catch (err) {
+    if (err instanceof EncryptionNotConfiguredError) {
+      return providerConfig().retell.apiKey;
+    }
+    return undefined;
+  }
+  return providerConfig().retell.apiKey;
+}
+
+/**
+ * GET /calls/:id/monitor-stream — streams live call transcript and tool events via SSE.
+ */
+router.get("/calls/:id/monitor-stream", requireRole(...OPERATIONS_ROLES), async (req, res): Promise<void> => {
+  const BUSINESS_ID = scopedBusinessId(req);
+  const callId = typeof req.params.id === "string" ? req.params.id : "";
+
+  const [call] = await db
+    .select()
+    .from(callsTable)
+    .where(and(eq(callsTable.id, callId), eq(callsTable.businessId, BUSINESS_ID)));
+
+  if (!call) {
+    res.status(404).json({ error: "Call not found" });
+    return;
+  }
+
+  if (call.status !== "in_progress") {
+    res.status(400).json({
+      error: `Cannot monitor call with status '${call.status}'. Only in-progress calls can be monitored.`,
+    });
+    return;
+  }
+
+  if (!call.providerCallId) {
+    res.status(400).json({ error: "Call has no active provider call ID" });
+    return;
+  }
+
+  if (callMonitorManager.getTenantSessionCount(BUSINESS_ID) >= 10) {
+    res.status(429).json({ error: "Too many concurrent monitoring sessions for this workspace" });
+    return;
+  }
+
+  const apiKey = await resolveTenantRetellApiKey(db, BUSINESS_ID);
+
+  if (!apiKey) {
+    res.status(503).json({ error: "Retell API key is not configured for this workspace" });
+    return;
+  }
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders?.();
+
+  try {
+    const { cleanup } = callMonitorManager.subscribe({
+      callId: call.id,
+      businessId: BUSINESS_ID,
+      providerCallId: call.providerCallId,
+      apiKey,
+      userId: req.leadSprintUserId || "anonymous",
+      res,
+    });
+
+    req.on("close", cleanup);
+  } catch (err: any) {
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message || "Failed to establish monitor session" });
+    }
+  }
 });
 
 /**

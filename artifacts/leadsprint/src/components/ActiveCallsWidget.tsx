@@ -18,6 +18,7 @@ import {
 } from "@workspace/api-client-react";
 import { useAuthenticatedEventStream } from "../lib/useAuthenticatedEventStream";
 import { Badge, Button, Skeleton } from "./common";
+import { LiveCallMonitorModal } from "./LiveCallMonitorModal";
 
 export function formatElapsed(seconds: number): string {
   if (Number.isNaN(seconds) || seconds < 0) return "00:00";
@@ -77,6 +78,7 @@ export function ActiveCallsWidget({
   className = "",
   onSelectCall,
 }: ActiveCallsWidgetProps) {
+  const [monitoringCall, setMonitoringCall] = useState<ActiveCallDto | null>(null);
   const { data: activeCalls = [], isLoading, isError, refetch } = useGetActiveCalls();
   const { isConnected, isConnecting } = useAuthenticatedEventStream();
 
@@ -204,11 +206,19 @@ export function ActiveCallsWidget({
                 key={call.id}
                 call={call}
                 onSelect={() => onSelectCall?.(call.id)}
+                onMonitor={() => setMonitoringCall(call)}
               />
             ))}
           </div>
         )}
       </div>
+
+      {monitoringCall && (
+        <LiveCallMonitorModal
+          call={monitoringCall}
+          onClose={() => setMonitoringCall(null)}
+        />
+      )}
     </section>
   );
 }
@@ -216,9 +226,11 @@ export function ActiveCallsWidget({
 function ActiveCallCard({
   call,
   onSelect,
+  onMonitor,
 }: {
   call: ActiveCallDto;
   onSelect: () => void;
+  onMonitor?: () => void;
 }) {
   const isInProgress = call.status === "in_progress";
   const isUncertain = call.status === "uncertain";
@@ -344,14 +356,26 @@ function ActiveCallCard({
           )}
 
           {isInProgress && !isStopPending && !isStopAmbiguous && (
-            <button
-              onClick={handleStop}
-              disabled={isActionLoading}
-              className="px-2 py-1 text-xs font-medium rounded-md bg-rose-500/10 text-rose-600 hover:bg-rose-500/20 disabled:opacity-50"
-              data-testid={`button-stop-call-${call.id}`}
-            >
-              End Call
-            </button>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onMonitor?.();
+                }}
+                className="px-2 py-1 text-xs font-medium rounded-md bg-sky-500/10 text-sky-600 hover:bg-sky-500/20"
+                data-testid={`button-monitor-call-${call.id}`}
+              >
+                Monitor
+              </button>
+              <button
+                onClick={handleStop}
+                disabled={isActionLoading}
+                className="px-2 py-1 text-xs font-medium rounded-md bg-rose-500/10 text-rose-600 hover:bg-rose-500/20 disabled:opacity-50"
+                data-testid={`button-stop-call-${call.id}`}
+              >
+                End Call
+              </button>
+            </div>
           )}
 
           {isStopPending && (

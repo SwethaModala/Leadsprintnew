@@ -595,6 +595,17 @@ export const CancelQueuedCallResponse = zod.object({
 
 
 /**
+ * Server-Sent Events stream delivering real-time transcript and tool events for an in-progress call.
+ * @summary Stream live call transcript via SSE
+ */
+export const StreamCallTranscriptParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const StreamCallTranscriptResponse = zod.unknown()
+
+
+/**
  * Recovery action for a call whose provider state is uncertain. Queues a fresh attempt for the same lead; the safety policy gate runs again, so a retry can still be blocked.
  * @summary Retry an uncertain, failed or policy-blocked call
  */

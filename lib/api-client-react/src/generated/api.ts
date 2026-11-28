@@ -1564,6 +1564,84 @@ export const useCancelQueuedCall = <TError = ErrorType<NotFoundResponse | Error>
       return useMutation(getCancelQueuedCallMutationOptions(options));
     }
 
+export const getStreamCallTranscriptUrl = (id: string,) => {
+
+
+
+
+  return `/api/calls/${id}/monitor-stream`
+}
+
+/**
+ * Server-Sent Events stream delivering real-time transcript and tool events for an in-progress call.
+ * @summary Stream live call transcript via SSE
+ */
+export const streamCallTranscript = async (id: string, options?: Parameters<typeof customFetch>[1]): Promise<string> => {
+
+  return customFetch<string>(getStreamCallTranscriptUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getStreamCallTranscriptQueryKey = (id: string,) => {
+    return [
+    `/api/calls/${id}/monitor-stream`
+    ] as const;
+    }
+
+
+export const getStreamCallTranscriptQueryOptions = <TData = Awaited<ReturnType<typeof streamCallTranscript>>, TError = ErrorType<BadRequestResponse | NotFoundResponse | Error>>(id: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof streamCallTranscript>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getStreamCallTranscriptQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof streamCallTranscript>>> = ({ signal }) => streamCallTranscript(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof streamCallTranscript>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type StreamCallTranscriptQueryResult = NonNullable<Awaited<ReturnType<typeof streamCallTranscript>>>
+export type StreamCallTranscriptQueryError = ErrorType<BadRequestResponse | NotFoundResponse | Error>
+
+
+/**
+ * @summary Stream live call transcript via SSE
+ */
+
+export function useStreamCallTranscript<TData = Awaited<ReturnType<typeof streamCallTranscript>>, TError = ErrorType<BadRequestResponse | NotFoundResponse | Error>>(
+ id: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof streamCallTranscript>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getStreamCallTranscriptQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
 export const getRetryCallUrl = (id: string,) => {
 
 
