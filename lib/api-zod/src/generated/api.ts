@@ -470,7 +470,9 @@ export const GetActiveCallsResponseItem = zod.object({
   "duration_seconds": zod.number().nullable(),
   "created_at": zod.string(),
   "stop_pending": zod.boolean().optional(),
-  "stop_ambiguous": zod.boolean().optional()
+  "stop_ambiguous": zod.boolean().optional(),
+  "transfer_state": zod.string().nullish(),
+  "transfer_destination": zod.string().nullish()
 })
 export const GetActiveCallsResponse = zod.array(GetActiveCallsResponseItem)
 

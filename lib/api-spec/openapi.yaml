@@ -1528,6 +1528,8 @@ components:
         created_at: { type: string }
         stop_pending: { type: boolean }
         stop_ambiguous: { type: boolean }
+        transfer_state: { type: ["string", "null"] }
+        transfer_destination: { type: ["string", "null"] }
       required: [id, lead_id, lead_name, phone, provider, status, direction, caller_number, destination_number, agent_id, agent_name, started_at, duration_seconds, created_at]
     StartCallInput:
       type: object

@@ -436,6 +436,10 @@ export interface ActiveCallDto {
   created_at: string;
   stop_pending?: boolean;
   stop_ambiguous?: boolean;
+  /** @nullable */
+  transfer_state?: string | null;
+  /** @nullable */
+  transfer_destination?: string | null;
 }
 
 export interface StartCallInput {

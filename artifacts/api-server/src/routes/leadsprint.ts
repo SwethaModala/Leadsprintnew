@@ -430,6 +430,8 @@ async function getActiveCallDto(row: typeof callsTable.$inferSelect) {
     created_at: row.createdAt.toISOString(),
     stop_pending: Boolean(metadata.operator_stop_pending),
     stop_ambiguous: Boolean(metadata.operator_stop_ambiguous),
+    transfer_state: typeof metadata.transfer_state === "string" ? metadata.transfer_state : null,
+    transfer_destination: typeof metadata.transfer_destination === "string" ? metadata.transfer_destination : null,
   };
 }
 

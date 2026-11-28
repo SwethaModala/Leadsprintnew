@@ -44,6 +44,7 @@ import {
 import { recordVoiceUsage, VOICE_COST_PER_MINUTE } from "../lib/usage";
 import { reconcileCallAndBillUnderLock } from "../lib/callBilling";
 import { tenantEventBus } from "../lib/eventBus";
+import { callMonitorManager } from "../lib/callMonitor";
 import { createWebhookLimiter } from "../middlewares/rateLimit";
 import { classifyUrgency, getProfile, isOutOfArea, validateDetails } from "../lib/verticals";
 import { sendBusinessAlertEmail } from "../lib/mailer";
@@ -570,7 +571,13 @@ router.post("/webhooks/retell", async (req, res): Promise<void> => {
   const eventType = typeof body.event === "string" ? body.event : "call_update";
   const rawExtEventId = eventId(req, body, eventType);
 
-  let reconcileResult: { billed: boolean; status: string; callId?: string; isTerminal?: boolean } = {
+  let reconcileResult: {
+    billed: boolean;
+    status: string;
+    callId?: string;
+    isTerminal?: boolean;
+    transferDestination?: string;
+  } = {
     billed: false,
     status: "unmatched",
   };
@@ -657,13 +664,125 @@ router.post("/webhooks/retell", async (req, res): Promise<void> => {
     const isTerminal = res.status === "completed" || res.status === "failed";
     reconcileResult = { billed: res.billed, status: res.status, callId: callRow.id, isTerminal };
 
-    // Transfer failure tracking
-    const transferAttempted = call.transfer_attempted === true || typeof call.transfer_to_number === "string";
-    const transferSucceeded = call.transferred === true || call.transfer_successful === true;
-    const failedTransferReasons = ["dial_failed", "dial_no_answer", "dial_busy", "voicemail_reached", "transfer_failed"];
-    const transferFailed = transferAttempted && !transferSucceeded && (disconnectionReason ? failedTransferReasons.includes(disconnectionReason) : true);
+    // Transfer lifecycle events
+    const rawDest = (
+      typeof body.transfer_destination === "string"
+        ? body.transfer_destination
+        : typeof call.transfer_to_number === "string"
+          ? call.transfer_to_number
+          : ""
+    ).trim();
+    // Validate phone characters (digits, +, spaces, hyphens, parentheses), plausible length 7-25 chars
+    const transferDestination =
+      rawDest && /^\+?[0-9()\s.-]{7,25}$/.test(rawDest) ? rawDest.slice(0, 32) : undefined;
+    reconcileResult.transferDestination = transferDestination;
 
-    if (transferFailed) {
+    const existingMetadata = ((callRow.metadata ?? {}) as Record<string, unknown>);
+    const currentTransferState = typeof existingMetadata.transfer_state === "string" ? existingMetadata.transfer_state : null;
+
+    if (eventType === "transfer_started") {
+      // Monotonic guard: do not overwrite a bridged, cancelled, or ended state
+      if (!currentTransferState || currentTransferState === "transfer_started") {
+        const nextMetadata = {
+          ...existingMetadata,
+          transfer_state: "transfer_started",
+          transfer_destination: transferDestination ?? existingMetadata.transfer_destination ?? null,
+          transfer_started_at: new Date().toISOString(),
+        };
+        await tx
+          .update(callsTable)
+          .set({ metadata: nextMetadata })
+          .where(and(eq(callsTable.id, callRow.id), eq(callsTable.businessId, businessId)));
+
+        await tx.insert(activitiesTable).values({
+          id: `activity_${crypto.randomUUID().slice(0, 12)}`,
+          businessId,
+          type: "call",
+          title: "Warm transfer initiated",
+          detail: `Call ${callId}: AI initiated transfer to human operator${transferDestination ? ` (${transferDestination})` : ""}. Waiting for answer.`,
+        });
+      }
+    } else if (eventType === "transfer_bridged") {
+      // Human operator answered; bridge established
+      if (currentTransferState !== "transfer_ended") {
+        const nextMetadata = {
+          ...existingMetadata,
+          transfer_state: "transfer_bridged",
+          transfer_destination: transferDestination ?? existingMetadata.transfer_destination ?? null,
+          transfer_bridged_at: new Date().toISOString(),
+        };
+        await tx
+          .update(callsTable)
+          .set({
+            metadata: nextMetadata,
+            transferred: true,
+          })
+          .where(and(eq(callsTable.id, callRow.id), eq(callsTable.businessId, businessId)));
+
+        await tx.insert(activitiesTable).values({
+          id: `activity_${crypto.randomUUID().slice(0, 12)}`,
+          businessId,
+          type: "call",
+          title: "Warm transfer connected",
+          detail: `Call ${callId}: Human operator answered and bridged with caller${transferDestination ? ` (${transferDestination})` : ""}.`,
+        });
+      }
+    } else if (eventType === "transfer_cancelled") {
+      // Monotonic guard: a late transfer_cancelled event must not overwrite transfer_bridged or transfer_ended
+      if (currentTransferState !== "transfer_bridged" && currentTransferState !== "transfer_ended") {
+        const nextMetadata = {
+          ...existingMetadata,
+          transfer_state: "transfer_cancelled",
+          transfer_cancelled_at: new Date().toISOString(),
+          transfer_cancelled_reason: disconnectionReason ?? "transfer_cancelled",
+        };
+        await tx
+          .update(callsTable)
+          .set({ metadata: nextMetadata })
+          .where(and(eq(callsTable.id, callRow.id), eq(callsTable.businessId, businessId)));
+
+        await tx.insert(activitiesTable).values({
+          id: `activity_${crypto.randomUUID().slice(0, 12)}`,
+          businessId,
+          type: "message",
+          title: "Transfer unsuccessful",
+          detail: `Call ${callId}: Warm transfer did not connect (${disconnectionReason ?? "unanswered or cancelled"}).`,
+        });
+        await tx
+          .update(leadsTable)
+          .set({
+            nextAction: "Call back — transfer to human did not connect",
+            updatedAt: new Date(),
+          })
+          .where(and(eq(leadsTable.id, callRow.leadId), eq(leadsTable.businessId, businessId)));
+      }
+    } else if (eventType === "transfer_ended") {
+      const nextMetadata = {
+        ...existingMetadata,
+        transfer_state: "transfer_ended",
+        transfer_ended_at: new Date().toISOString(),
+      };
+      await tx
+        .update(callsTable)
+        .set({ metadata: nextMetadata })
+        .where(and(eq(callsTable.id, callRow.id), eq(callsTable.businessId, businessId)));
+
+      await tx.insert(activitiesTable).values({
+        id: `activity_${crypto.randomUUID().slice(0, 12)}`,
+        businessId,
+        type: "call",
+        title: "Transferred call ended",
+        detail: `Call ${callId}: Human operator conversation concluded.`,
+      });
+    }
+
+    // Call-ended transfer failure tracking (fallback for calls ending without prior transfer_cancelled)
+    const transferAttempted = call.transfer_attempted === true || typeof call.transfer_to_number === "string" || eventType === "transfer_started";
+    const transferSucceeded = call.transferred === true || call.transfer_successful === true || currentTransferState === "transfer_bridged";
+    const failedTransferReasons = ["dial_failed", "dial_no_answer", "dial_busy", "voicemail_reached", "transfer_failed"];
+    const transferFailed = eventType === "call_ended" && transferAttempted && !transferSucceeded && (disconnectionReason ? failedTransferReasons.includes(disconnectionReason) : true);
+
+    if (transferFailed && currentTransferState !== "transfer_cancelled") {
       await tx.insert(activitiesTable).values({
         id: `activity_${crypto.randomUUID().slice(0, 12)}`,
         businessId,
@@ -681,11 +800,27 @@ router.post("/webhooks/retell", async (req, res): Promise<void> => {
     }
   });
 
+  // Notify real-time subscribers via tenant event bus & monitor manager
   if (reconcileResult.callId) {
+    const isTransferEvent = eventType.startsWith("transfer_");
+    const transferState = isTransferEvent ? eventType : undefined;
+    const transferDest = reconcileResult.transferDestination;
+
     tenantEventBus.broadcast(businessId, "call_update", {
       id: reconcileResult.callId,
       status: reconcileResult.status,
+      ...(isTransferEvent ? { transfer_state: transferState, transfer_destination: transferDest } : {}),
     });
+
+    if (isTransferEvent) {
+      callMonitorManager.notifyTransferEvent({
+        callId: reconcileResult.callId,
+        businessId,
+        transferStatus: eventType as any,
+        destination: transferDest,
+        reason: typeof call.disconnection_reason === "string" ? call.disconnection_reason : undefined,
+      });
+    }
   }
 
   res.status(202).json({ accepted: true, status: reconcileResult.status, billed: reconcileResult.billed });

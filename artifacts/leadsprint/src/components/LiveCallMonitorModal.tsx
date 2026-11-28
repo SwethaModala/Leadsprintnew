@@ -39,6 +39,12 @@ export function LiveCallMonitorModal({ call, onClose }: LiveCallMonitorModalProp
   const [tools, setTools] = useState<LiveToolCallItem[]>([]);
   const [callEnded, setCallEnded] = useState(false);
   const [endedReason, setEndedReason] = useState<string | null>(null);
+  const [transferState, setTransferState] = useState<string | null>(
+    (call as any).transfer_state ?? null,
+  );
+  const [transferDestination, setTransferDestination] = useState<string | null>(
+    (call as any).transfer_destination ?? null,
+  );
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const { isConnected, isConnecting, error } = useAuthenticatedEventStream({
@@ -105,6 +111,14 @@ export function LiveCallMonitorModal({ call, onClose }: LiveCallMonitorModalProp
       } else if (event.event === "call_ended") {
         setCallEnded(true);
         setEndedReason(event.data?.reason || "Call completed");
+      } else if (event.event === "transfer_update") {
+        const data = event.data;
+        if (data?.transferStatus) {
+          setTransferState(data.transferStatus);
+        }
+        if (data?.destination) {
+          setTransferDestination(data.destination);
+        }
       }
     },
   });
@@ -189,6 +203,39 @@ export function LiveCallMonitorModal({ call, onClose }: LiveCallMonitorModalProp
             </button>
           </div>
         </div>
+
+        {/* Transfer State Banner */}
+        {transferState && (
+          <div
+            className={`border-b px-5 py-2.5 flex items-center justify-between text-xs font-medium ${
+              transferState === "transfer_bridged"
+                ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400"
+                : transferState === "transfer_started"
+                  ? "bg-sky-500/10 border-sky-500/20 text-sky-600 dark:text-sky-400 animate-pulse"
+                  : transferState === "transfer_cancelled"
+                    ? "bg-rose-500/10 border-rose-500/20 text-rose-600 dark:text-rose-400"
+                    : "bg-neutral-500/10 border-neutral-500/20 text-neutral-600 dark:text-neutral-400"
+            }`}
+            data-testid="monitor-transfer-banner"
+          >
+            <div className="flex items-center gap-2">
+              <span className="font-semibold">
+                {transferState === "transfer_started"
+                  ? "Transfer initiated (Waiting for human operator)"
+                  : transferState === "transfer_bridged"
+                    ? "Connected to human operator"
+                    : transferState === "transfer_cancelled"
+                      ? "Transfer unsuccessful"
+                      : "Transfer ended"}
+              </span>
+            </div>
+            {transferDestination && (
+              <span className="font-mono text-[11px] opacity-80">
+                Destination: {transferDestination}
+              </span>
+            )}
+          </div>
+        )}
 
         {/* Call Ended Alert Banner */}
         {callEnded && (

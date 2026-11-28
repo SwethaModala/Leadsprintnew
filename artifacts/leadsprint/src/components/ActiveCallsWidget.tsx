@@ -238,6 +238,8 @@ function ActiveCallCard({
   const isInbound = call.direction === "inbound";
   const isStopPending = Boolean(call.stop_pending);
   const isStopAmbiguous = Boolean(call.stop_ambiguous);
+  const transferState = (call as any).transfer_state as string | null | undefined;
+  const transferDestination = (call as any).transfer_destination as string | null | undefined;
 
   const stopCallMutation = useStopCall();
   const cancelCallMutation = useCancelQueuedCall();
@@ -321,6 +323,35 @@ function ActiveCallCard({
             <ElapsedDuration startedAt={call.started_at} />
           </div>
         </div>
+
+        {/* Transfer State Alert/Badge */}
+        {transferState && (
+          <div
+            className={`mt-2 flex items-center justify-between rounded-md px-2 py-1 text-xs font-medium border ${
+              transferState === "transfer_bridged"
+                ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                : transferState === "transfer_started"
+                  ? "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/20 animate-pulse"
+                  : transferState === "transfer_cancelled"
+                    ? "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20"
+                    : "bg-neutral-500/10 text-neutral-600 dark:text-neutral-400 border-neutral-500/20"
+            }`}
+            data-testid={`badge-transfer-state-${call.id}`}
+          >
+            <span>
+              {transferState === "transfer_started"
+                ? "Transfer initiated (Waiting for operator)"
+                : transferState === "transfer_bridged"
+                  ? "Connected to human operator"
+                  : transferState === "transfer_cancelled"
+                    ? "Transfer unsuccessful"
+                    : "Transfer ended"}
+            </span>
+            {transferDestination && (
+              <span className="font-mono text-[10px] opacity-80">{transferDestination}</span>
+            )}
+          </div>
+        )}
 
         {/* Lead & Phone info */}
         <div className="pt-3 pb-2 space-y-1">

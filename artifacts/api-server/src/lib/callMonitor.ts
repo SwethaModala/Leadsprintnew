@@ -290,6 +290,27 @@ export class CallMonitorManager {
     }
   }
 
+  /**
+   * Broadcasts a transfer state update to any live monitoring subscribers for a call.
+   */
+  notifyTransferEvent(options: {
+    callId: string;
+    businessId: string;
+    transferStatus: "transfer_started" | "transfer_bridged" | "transfer_cancelled" | "transfer_ended";
+    destination?: string;
+    reason?: string;
+  }): void {
+    const session = this.sessions.get(options.callId);
+    if (!session || session.businessId !== options.businessId) return;
+
+    this.broadcast(session, "transfer_update", {
+      transferStatus: options.transferStatus,
+      destination: options.destination,
+      reason: options.reason,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
   private broadcast(session: ActiveMonitorSession, event: string, data: unknown): void {
     for (const sub of session.subscribers.values()) {
       this.sendSSE(sub.res, event, data);
