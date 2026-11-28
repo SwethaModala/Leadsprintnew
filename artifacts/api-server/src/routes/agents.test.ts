@@ -57,6 +57,26 @@ beforeEach(async () => {
     { id: USER_A_MEMBER, businessId: BIZ_A, email: "member@alpha.com", name: "Alpha Member" },
     { id: USER_B_ADMIN, businessId: BIZ_B, email: "admin@beta.com", name: "Beta Admin" },
   ]);
+
+  // Default mock for listRetellAgents so tests linking known agents pass
+  vi.spyOn(retellService, "listRetellAgents").mockResolvedValue([
+    {
+      retell_agent_id: "agent_retell_123",
+      agent_name: "Mock Retell Agent",
+      voice_id: "voice_1",
+      language: "en-US",
+      response_engine: { type: "retell-llm" },
+      last_modification_timestamp: 1700000000,
+    },
+    {
+      retell_agent_id: "agent_retell_inbound",
+      agent_name: "Mock Inbound Agent",
+      voice_id: "voice_1",
+      language: "en-US",
+      response_engine: { type: "retell-llm" },
+      last_modification_timestamp: 1700000000,
+    },
+  ]);
 });
 
 afterEach(() => {
@@ -287,6 +307,17 @@ describe("Phase 3 Agents API", () => {
 
   describe("Retell Integration & Web Calls", () => {
     it("links a Retell agent ID to a local agent", async () => {
+      vi.spyOn(retellService, "listRetellAgents").mockResolvedValue([
+        {
+          retell_agent_id: "agent_retell_123",
+          agent_name: "Mock Retell Agent",
+          voice_id: "voice_1",
+          language: "en-US",
+          response_engine: { type: "retell-llm" },
+          last_modification_timestamp: 1700000000,
+        },
+      ]);
+
       const app = buildApp();
       const created = await request(app)
         .post("/api/agents")
@@ -508,6 +539,213 @@ describe("Phase 3 Agents API", () => {
       const keyA = await getTenantRetellKey(BIZ_A);
       // Must NOT fall back to global RETELL_API_KEY
       expect(keyA).toBeUndefined();
+    });
+  });
+
+  describe("Retell Agent Discovery and Linking", () => {
+    it("returns 503 when Retell is not configured for tenant", async () => {
+      delete process.env["RETELL_API_KEY"];
+      const app = buildApp();
+      const res = await request(app)
+        .get("/api/agents/retell/remote")
+        .set("x-test-business-id", BIZ_A)
+        .set("x-test-user-id", USER_A_ADMIN)
+        .set("x-test-role", "admin");
+
+      expect(res.status).toBe(503);
+      expect(res.body.error).toMatch(/Retell is not configured/i);
+    });
+
+    it("lists remote agents from Retell using tenant credentials", async () => {
+      vi.spyOn(retellService, "listRetellAgents").mockResolvedValue([
+        {
+          retell_agent_id: "agent_remote_999",
+          agent_name: "Inbound Real Estate Bot",
+          voice_id: "voice_123",
+          language: "en-US",
+          response_engine: { type: "retell-llm" },
+          last_modification_timestamp: 1700000000,
+        },
+      ]);
+
+      const app = buildApp();
+      const res = await request(app)
+        .get("/api/agents/retell/remote")
+        .set("x-test-business-id", BIZ_A)
+        .set("x-test-user-id", USER_A_ADMIN)
+        .set("x-test-role", "admin");
+
+      expect(res.status).toBe(200);
+      expect(res.body.agents).toHaveLength(1);
+      expect(res.body.agents[0].retell_agent_id).toBe("agent_remote_999");
+      expect(res.body.agents[0].agent_name).toBe("Inbound Real Estate Bot");
+    });
+
+    it("creates a new agent directly with retell_agent_id and active status, syncing to businessesTable", async () => {
+      vi.spyOn(retellService, "listRetellAgents").mockResolvedValue([
+        {
+          retell_agent_id: "agent_direct_123",
+          agent_name: "Direct Agent",
+          voice_id: "voice_1",
+          language: "en-US",
+          response_engine: { type: "retell-llm" },
+          last_modification_timestamp: 1700000000,
+        },
+      ]);
+
+      const app = buildApp();
+      const res = await request(app)
+        .post("/api/agents")
+        .set("x-test-business-id", BIZ_A)
+        .set("x-test-user-id", USER_A_ADMIN)
+        .set("x-test-role", "admin")
+        .send({
+          name: "Direct Linked Agent",
+          use_case: "outbound_qualification",
+          retell_agent_id: "agent_direct_123",
+          status: "active",
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.agent.retell_agent_id).toBe("agent_direct_123");
+      expect(res.body.agent.status).toBe("active");
+
+      // Verify business table is synchronized
+      const [biz] = await db.select().from(businessesTable).where(eq(businessesTable.id, BIZ_A));
+      expect(biz?.retellAgentId).toBe("agent_direct_123");
+    });
+
+    it("links an existing agent to a remote Retell agent and updates status to active", async () => {
+      vi.spyOn(retellService, "listRetellAgents").mockResolvedValue([
+        {
+          retell_agent_id: "agent_linked_456",
+          agent_name: "Linked Remote Agent",
+          voice_id: "voice_1",
+          language: "en-US",
+          response_engine: { type: "retell-llm" },
+          last_modification_timestamp: 1700000000,
+        },
+      ]);
+
+      const app = buildApp();
+      // First create a draft agent
+      const createRes = await request(app)
+        .post("/api/agents")
+        .set("x-test-business-id", BIZ_A)
+        .set("x-test-user-id", USER_A_ADMIN)
+        .set("x-test-role", "admin")
+        .send({
+          name: "Draft Agent",
+          use_case: "real_estate",
+        });
+
+      const agentId = createRes.body.agent.id;
+
+      // Link it to remote retell agent with status: active
+      const linkRes = await request(app)
+        .post(`/api/agents/${agentId}/retell-link`)
+        .set("x-test-business-id", BIZ_A)
+        .set("x-test-user-id", USER_A_ADMIN)
+        .set("x-test-role", "admin")
+        .send({
+          retell_agent_id: "agent_linked_456",
+          status: "active",
+        });
+
+      expect(linkRes.status).toBe(200);
+      expect(linkRes.body.agent.retell_agent_id).toBe("agent_linked_456");
+      expect(linkRes.body.agent.status).toBe("active");
+
+      // Verify business table is updated
+      const [biz] = await db.select().from(businessesTable).where(eq(businessesTable.id, BIZ_A));
+      expect(biz?.retellAgentId).toBe("agent_linked_456");
+
+      // Verify cross-tenant isolation: Tenant B cannot link Tenant A's agent
+      const crossRes = await request(app)
+        .post(`/api/agents/${agentId}/retell-link`)
+        .set("x-test-business-id", BIZ_B)
+        .set("x-test-user-id", USER_B_ADMIN)
+        .set("x-test-role", "admin")
+        .send({
+          retell_agent_id: "agent_hacked",
+        });
+
+      expect(crossRes.status).toBe(404);
+    });
+
+    it("rejects linking or creating an agent with an invalid or unverified remote agent ID", async () => {
+      vi.spyOn(retellService, "listRetellAgents").mockResolvedValue([
+        {
+          retell_agent_id: "agent_legit_111",
+          agent_name: "Legit Agent",
+          voice_id: "voice_1",
+          language: "en-US",
+          response_engine: { type: "retell-llm" },
+          last_modification_timestamp: 1700000000,
+        },
+      ]);
+
+      const app = buildApp();
+      // Try to create agent with unknown remote agent ID
+      const createRes = await request(app)
+        .post("/api/agents")
+        .set("x-test-business-id", BIZ_A)
+        .set("x-test-user-id", USER_A_ADMIN)
+        .set("x-test-role", "admin")
+        .send({
+          name: "Fake Agent",
+          use_case: "real_estate",
+          retell_agent_id: "agent_nonexistent_999",
+        });
+
+      expect(createRes.status).toBe(400);
+      expect(createRes.body.error).toMatch(/was not found in the configured Retell account/i);
+
+      // Create draft agent
+      const draftRes = await request(app)
+        .post("/api/agents")
+        .set("x-test-business-id", BIZ_A)
+        .set("x-test-user-id", USER_A_ADMIN)
+        .set("x-test-role", "admin")
+        .send({ name: "Valid Draft", use_case: "real_estate" });
+
+      const agentId = draftRes.body.agent.id;
+
+      // Try linking with unknown remote agent ID
+      const linkRes = await request(app)
+        .post(`/api/agents/${agentId}/retell-link`)
+        .set("x-test-business-id", BIZ_A)
+        .set("x-test-user-id", USER_A_ADMIN)
+        .set("x-test-role", "admin")
+        .send({ retell_agent_id: "agent_nonexistent_999" });
+
+      expect(linkRes.status).toBe(400);
+      expect(linkRes.body.error).toMatch(/was not found in the configured Retell account/i);
+    });
+
+    it("rejects agent linking when tenant has incomplete or undecryptable credentials (fails closed)", async () => {
+      // Configure tenant A with credential record missing api_key
+      await upsertTenantProviderCredential(db as never, {
+        businessId: BIZ_A,
+        userId: USER_A_ADMIN,
+        provider: "retell",
+        config: { agent_id: "agent_only_no_key" },
+      });
+
+      const app = buildApp();
+      const res = await request(app)
+        .post("/api/agents")
+        .set("x-test-business-id", BIZ_A)
+        .set("x-test-user-id", USER_A_ADMIN)
+        .set("x-test-role", "admin")
+        .send({
+          name: "Test Missing Key",
+          use_case: "real_estate",
+          retell_agent_id: "agent_some_id",
+        });
+
+      expect(res.status).toBe(503);
+      expect(res.body.error).toMatch(/Retell is not configured/i);
     });
   });
 });

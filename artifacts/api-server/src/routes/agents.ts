@@ -12,6 +12,7 @@ import { eq, and, desc, sql } from "drizzle-orm";
 import {
   agentsTable,
   agentVersionsTable,
+  businessesTable,
   phoneNumbersTable,
   db as defaultDb,
 } from "@workspace/db";
@@ -75,6 +76,46 @@ export async function getTenantRetellKey(businessId: string): Promise<string | u
   }
   // Global env key fallback is only for single-tenant / pilot workspaces without configured credentials
   return providerConfig().retell.apiKey;
+}
+
+async function verifyRemoteRetellAgentExists(
+  businessId: string,
+  retellAgentId: string,
+): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+  const apiKey = await getTenantRetellKey(businessId);
+  if (!apiKey) {
+    return {
+      ok: false,
+      status: 503,
+      error: "Retell is not configured for this workspace",
+    };
+  }
+
+  try {
+    const remoteAgents = await listRetellAgents(apiKey);
+    const exists = remoteAgents.some((a) => a.retell_agent_id === retellAgentId);
+    if (!exists) {
+      return {
+        ok: false,
+        status: 400,
+        error: `Retell agent "${retellAgentId}" was not found in the configured Retell account.`,
+      };
+    }
+    return { ok: true };
+  } catch (err) {
+    if (err instanceof ProviderNotConfiguredError) {
+      return {
+        ok: false,
+        status: 503,
+        error: "Retell is not configured for this workspace",
+      };
+    }
+    return {
+      ok: false,
+      status: 502,
+      error: err instanceof Error ? err.message : "Failed to verify Retell agent with provider.",
+    };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -150,6 +191,9 @@ router.post("/agents", requireRole("admin", "owner"), async (req, res, next) => 
       language,
       temperature,
       create_retell,
+      retell_agent_id,
+      retell_llm_id,
+      status,
     } = req.body as {
       name: string;
       use_case: string;
@@ -160,6 +204,9 @@ router.post("/agents", requireRole("admin", "owner"), async (req, res, next) => 
       language?: string;
       temperature?: number;
       create_retell?: boolean;
+      retell_agent_id?: string;
+      retell_llm_id?: string;
+      status?: "draft" | "active" | "paused";
     };
 
     if (!name?.trim() || !use_case) {
@@ -184,7 +231,18 @@ router.post("/agents", requireRole("admin", "owner"), async (req, res, next) => 
       });
       retellAgentId = pair.retellAgentId;
       retellLlmId = pair.retellLlmId;
+    } else if (retell_agent_id) {
+      const trimmedId = String(retell_agent_id).trim();
+      const verification = await verifyRemoteRetellAgentExists(req.leadSprintBusinessId!, trimmedId);
+      if (!verification.ok) {
+        res.status(verification.status).json({ error: verification.error });
+        return;
+      }
+      retellAgentId = trimmedId;
+      retellLlmId = retell_llm_id ? String(retell_llm_id).trim() : null;
     }
+
+    const agentStatus = status && ["draft", "active", "paused"].includes(status) ? status : "draft";
 
     const agentId = id("agt");
     const [row] = await db
@@ -194,7 +252,7 @@ router.post("/agents", requireRole("admin", "owner"), async (req, res, next) => 
         businessId: req.leadSprintBusinessId!,
         name: name.trim(),
         useCase: use_case,
-        status: "draft",
+        status: agentStatus,
         systemPrompt: system_prompt ?? "",
         greeting: greeting_message ?? "",
         fallbackMessage: fallback_message ?? "Let me connect you with a team member who can help.",
@@ -206,6 +264,16 @@ router.post("/agents", requireRole("admin", "owner"), async (req, res, next) => 
         createdByUserId: req.leadSprintUserId ?? null,
       })
       .returning();
+
+    if (retellAgentId) {
+      await db
+        .update(businessesTable)
+        .set({
+          retellAgentId,
+          updatedAt: new Date(),
+        })
+        .where(eq(businessesTable.id, req.leadSprintBusinessId!));
+    }
 
     res.status(201).json({ agent: agentToDetail(row!) });
   } catch (err) {
@@ -225,6 +293,10 @@ router.post("/agents", requireRole("admin", "owner"), async (req, res, next) => 
 router.get("/agents/retell/remote", requireRole("admin", "owner"), async (req, res, next) => {
   try {
     const apiKey = await getTenantRetellKey(req.leadSprintBusinessId!);
+    if (!apiKey) {
+      res.status(503).json({ error: "Retell is not configured for this workspace" });
+      return;
+    }
     const agents = await listRetellAgents(apiKey);
     res.json({ agents });
   } catch (err) {
@@ -535,9 +607,10 @@ router.post("/agents/:agentId/retell-link", requireRole("admin", "owner"), async
       return;
     }
 
-    const { retell_agent_id, retell_llm_id } = req.body as {
+    const { retell_agent_id, retell_llm_id, status } = req.body as {
       retell_agent_id: string;
       retell_llm_id?: string;
+      status?: "draft" | "active" | "paused";
     };
 
     if (!retell_agent_id) {
@@ -545,11 +618,21 @@ router.post("/agents/:agentId/retell-link", requireRole("admin", "owner"), async
       return;
     }
 
+    const trimmedId = String(retell_agent_id).trim();
+    const verification = await verifyRemoteRetellAgentExists(req.leadSprintBusinessId!, trimmedId);
+    if (!verification.ok) {
+      res.status(verification.status).json({ error: verification.error });
+      return;
+    }
+
+    const nextStatus = status && ["draft", "active", "paused"].includes(status) ? status : existing.status;
+
     const [updated] = await db
       .update(agentsTable)
       .set({
-        retellAgentId: retell_agent_id,
+        retellAgentId: trimmedId,
         retellLlmId: retell_llm_id ?? null,
+        status: nextStatus,
         updatedAt: new Date(),
       })
       .where(
@@ -559,6 +642,15 @@ router.post("/agents/:agentId/retell-link", requireRole("admin", "owner"), async
         ),
       )
       .returning();
+
+    // Synchronize workspace default retellAgentId as well
+    await db
+      .update(businessesTable)
+      .set({
+        retellAgentId: retell_agent_id,
+        updatedAt: new Date(),
+      })
+      .where(eq(businessesTable.id, req.leadSprintBusinessId!));
 
     res.json({ agent: agentToDetail(updated!) });
   } catch (err) {

@@ -5,8 +5,10 @@
  * LeadSprint operator console API
  * OpenAPI spec version: 0.1.0
  */
+import type { AgentStatus } from './agentStatus';
 
 export interface RetellLinkRequest {
   retell_agent_id: string;
   retell_llm_id?: string;
+  status?: AgentStatus;
 }

@@ -52,18 +52,43 @@ function Field({
   );
 }
 
-function ServiceRow({ label, value }: { label: string; value?: string | null }) {
+function ServiceRow({
+  label,
+  value,
+  actionLink,
+  actionText,
+}: {
+  label: string;
+  value?: string | null;
+  actionLink?: string;
+  actionText?: string;
+}) {
   return (
     <div className="flex items-center justify-between gap-3 px-4 py-3">
-      <span className="text-sm text-[hsl(var(--foreground))]">{label}</span>
-      {value ? (
-        <Badge className="border-[hsl(var(--success))/0.35] bg-[hsl(var(--success))/0.08] text-[hsl(var(--success))]">
-          <Check size={12} className="mr-1.5" />
-          Connected
-        </Badge>
-      ) : (
-        <Badge className="border-[#e2e8f0]/0.5 bg-[#f8fafc] text-[#475569]">Not configured</Badge>
-      )}
+      <div className="flex flex-col">
+        <span className="text-sm font-medium text-[hsl(var(--foreground))]">{label}</span>
+        {value && <span className="font-mono text-xs text-[hsl(var(--muted-foreground))]">{value}</span>}
+      </div>
+      <div className="flex items-center gap-2">
+        {value ? (
+          <Badge className="border-[hsl(var(--success))/0.35] bg-[hsl(var(--success))/0.08] text-[hsl(var(--success))]">
+            <Check size={12} className="mr-1.5" />
+            Connected
+          </Badge>
+        ) : (
+          <div className="flex items-center gap-2">
+            <Badge className="border-[#e2e8f0]/0.5 bg-[#f8fafc] text-[#475569]">Not configured</Badge>
+            {actionLink && actionText && (
+              <a
+                href={actionLink}
+                className="text-xs font-medium text-[hsl(var(--primary))] hover:underline"
+              >
+                {actionText}
+              </a>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -340,9 +365,19 @@ export default function SettingsPage() {
           </div>
           <div className="rounded-lg border border-[hsl(var(--border))] p-4">
             <p className="text-[10px] font-bold uppercase tracking-wider text-[hsl(var(--muted-foreground))]">Connected services</p>
-            <div className="mt-3 space-y-2">
-              <ServiceRow label="Retell agent" value={data.retell_agent_id} />
-              <ServiceRow label="Cal.com event type" value={data.cal_event_type_id} />
+            <div className="mt-3 divide-y divide-[hsl(var(--border))] rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--card))]">
+              <ServiceRow
+                label="Retell voice agent"
+                value={data.retell_agent_id}
+                actionLink="/workspace/agents"
+                actionText="Link on AI Agents page →"
+              />
+              <ServiceRow
+                label="Cal.com event type"
+                value={data.cal_event_type_id}
+                actionLink="#credentials"
+                actionText="Configure credentials below ↓"
+              />
             </div>
           </div>
 

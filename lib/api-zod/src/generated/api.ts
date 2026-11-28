@@ -1246,7 +1246,10 @@ export const PostAgentsBody = zod.object({
   "voice_id": zod.string().optional(),
   "language": zod.string().optional(),
   "temperature": zod.number().optional(),
-  "create_retell": zod.boolean().default(postAgentsBodyCreateRetellDefault)
+  "create_retell": zod.boolean().default(postAgentsBodyCreateRetellDefault),
+  "retell_agent_id": zod.string().optional(),
+  "retell_llm_id": zod.string().optional(),
+  "status": zod.enum(['draft', 'active', 'paused']).optional()
 })
 
 export const PostAgentsResponse = zod.object({
@@ -1422,7 +1425,8 @@ export const PostAgentsAgentIdRetellLinkParams = zod.object({
 
 export const PostAgentsAgentIdRetellLinkBody = zod.object({
   "retell_agent_id": zod.string(),
-  "retell_llm_id": zod.string().optional()
+  "retell_llm_id": zod.string().optional(),
+  "status": zod.enum(['draft', 'active', 'paused']).optional()
 })
 
 export const PostAgentsAgentIdRetellLinkResponse = zod.object({

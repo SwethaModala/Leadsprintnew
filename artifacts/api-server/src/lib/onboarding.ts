@@ -41,9 +41,20 @@ function nonEmpty(value: string | null | undefined): boolean {
 
 export function buildOnboardingChecklist(
   business: BusinessRow | undefined,
-  overrides?: { retellConfigured?: boolean; calcomConfigured?: boolean },
+  overrides?: {
+    retellConfigured?: boolean;
+    calcomConfigured?: boolean;
+    effectiveRetellAgentId?: string | null;
+    effectiveCalEventTypeId?: string | null;
+  },
 ): OnboardingChecklist {
   const market = business?.market === "IN" ? "IN" : "US";
+  const calEventType = overrides?.effectiveCalEventTypeId !== undefined
+    ? overrides.effectiveCalEventTypeId
+    : business?.calEventTypeId;
+  const retellAgent = overrides?.effectiveRetellAgentId !== undefined
+    ? overrides.effectiveRetellAgentId
+    : business?.retellAgentId;
 
   const items: ChecklistItem[] = [
     {
@@ -105,7 +116,7 @@ export function buildOnboardingChecklist(
     {
       key: "calendar_event_type",
       label: "Cal.com event type",
-      complete: nonEmpty(business?.calEventTypeId),
+      complete: nonEmpty(calEventType),
       severity: "required",
       detail: "The event type booked when a lead accepts a slot.",
     },
@@ -126,7 +137,7 @@ export function buildOnboardingChecklist(
     {
       key: "retell_agent",
       label: "Production Retell agent linked",
-      complete: nonEmpty(business?.retellAgentId),
+      complete: nonEmpty(retellAgent),
       severity: "recommended",
       detail: "Pin the workspace to the reviewed production agent rather than the number's default agent.",
     },
@@ -156,7 +167,12 @@ export function buildOnboardingChecklist(
  */
 export function liveCallingBlockedReason(
   business: BusinessRow | undefined,
-  overrides?: { retellConfigured?: boolean; calcomConfigured?: boolean },
+  overrides?: {
+    retellConfigured?: boolean;
+    calcomConfigured?: boolean;
+    effectiveRetellAgentId?: string | null;
+    effectiveCalEventTypeId?: string | null;
+  },
 ): string | null {
   const checklist = buildOnboardingChecklist(business, overrides);
   if (checklist.ready_for_live_calls) return null;

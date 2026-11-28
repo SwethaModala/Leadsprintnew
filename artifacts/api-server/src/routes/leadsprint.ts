@@ -1399,6 +1399,74 @@ router.post("/appointments/book", requireRole(...OPERATIONS_ROLES), async (req, 
   }
 });
 
+async function resolveConnectedServices(
+  businessId: string,
+  business: typeof businessesTable.$inferSelect | undefined,
+): Promise<{
+  retellAgentId: string | null;
+  calEventTypeId: string | null;
+  retellConfigured: boolean;
+  calcomConfigured: boolean;
+}> {
+  const market = business?.market === "IN" ? "IN" : "US";
+  let retellCreds: RetellCredentialOverride | null = null;
+  let calCreds: CalcomCredentialOverride | null = null;
+  try {
+    retellCreds = (await loadTenantProviderSecrets(db, businessId, "retell")) as RetellCredentialOverride | null;
+  } catch {}
+  try {
+    calCreds = (await loadTenantProviderSecrets(db, businessId, "calcom")) as CalcomCredentialOverride | null;
+  } catch {}
+
+  // 1. Resolve active linked agent from agents table, falling back to business.retellAgentId
+  let activeRetellAgentId: string | null = null;
+  const [activeAgent] = await db
+    .select({ retellAgentId: agentsTable.retellAgentId })
+    .from(agentsTable)
+    .where(and(eq(agentsTable.businessId, businessId), eq(agentsTable.status, "active")))
+    .orderBy(desc(agentsTable.updatedAt))
+    .limit(1);
+
+  if (activeAgent?.retellAgentId) {
+    activeRetellAgentId = activeAgent.retellAgentId;
+  } else if (business?.retellAgentId) {
+    activeRetellAgentId = business.retellAgentId;
+  }
+
+  // 2. Resolve Cal.com event type ID strictly per tenant credentials or fallback
+  let effectiveCalEventTypeId: string | null = null;
+  if (calCreds) {
+    // If tenant configured their own Cal.com credentials, must have both api_key and event_type_id
+    const apiKey = calCreds.api_key;
+    const eventTypeId = calCreds.event_type_id;
+    if (apiKey && eventTypeId) {
+      effectiveCalEventTypeId = eventTypeId;
+    }
+  } else {
+    // If no tenant credential record exists:
+    // First preserve valid business.calEventTypeId if present
+    if (business?.calEventTypeId) {
+      effectiveCalEventTypeId = business.calEventTypeId;
+    } else {
+      // Otherwise fall back to global env if global CALCOM_API_KEY is configured
+      const globalCfg = providerConfig().calcom;
+      if (globalCfg.apiKey) {
+        effectiveCalEventTypeId = globalCfg.eventTypeId || null;
+      }
+    }
+  }
+
+  const retellConfigured = hasRetellConfigForMarket(market, retellCreds);
+  const calcomConfigured = hasCalConfig(calCreds);
+
+  return {
+    retellAgentId: activeRetellAgentId,
+    calEventTypeId: effectiveCalEventTypeId,
+    retellConfigured,
+    calcomConfigured,
+  };
+}
+
 /**
  * Pilot setup checklist. The console shows this on the Today screen and a
  * dedicated setup panel; `ready_for_live_calls: false` means POST
@@ -1407,18 +1475,12 @@ router.post("/appointments/book", requireRole(...OPERATIONS_ROLES), async (req, 
 router.get("/onboarding/checklist", requireRole(...READ_ROLES), async (req, res): Promise<void> => {
   const BUSINESS_ID = scopedBusinessId(req);
   const business = await getBusiness(BUSINESS_ID);
-  const market = business?.market === "IN" ? "IN" : "US";
-  let retellCreds: RetellCredentialOverride | null = null;
-  let calCreds: CalcomCredentialOverride | null = null;
-  try {
-    retellCreds = (await loadTenantProviderSecrets(db, BUSINESS_ID, "retell")) as RetellCredentialOverride | null;
-    calCreds = (await loadTenantProviderSecrets(db, BUSINESS_ID, "calcom")) as CalcomCredentialOverride | null;
-  } catch {
-    // Fall back to deployment env checks cleanly.
-  }
+  const connected = await resolveConnectedServices(BUSINESS_ID, business);
   res.json(buildOnboardingChecklist(business, {
-    retellConfigured: hasRetellConfigForMarket(market, retellCreds),
-    calcomConfigured: hasCalConfig(calCreds),
+    retellConfigured: connected.retellConfigured,
+    calcomConfigured: connected.calcomConfigured,
+    effectiveRetellAgentId: connected.retellAgentId,
+    effectiveCalEventTypeId: connected.calEventTypeId,
   }));
 });
 
@@ -1427,10 +1489,12 @@ router.get("/business-settings", requireRole(...READ_ROLES), async (_req, res): 
   const BUSINESS_ID = scopedBusinessId(req);
   const business = await getBusiness(BUSINESS_ID);
   if (!business) { res.status(503).json({ error: "Business setup is not ready" }); return; }
+  const connected = await resolveConnectedServices(BUSINESS_ID, business);
   res.json(GetBusinessSettingsResponse.parse({
     id: business.id, name: business.name, market: business.market, timezone: business.timezone, phone_number: business.phoneNumber, transfer_number: business.transferNumber,
     recording_disclosure: business.recordingDisclosure, ai_disclosure: business.aiDisclosure, quiet_hours: business.quietHours, max_call_attempts: business.maxCallAttempts, suppression_enabled: business.suppressionEnabled,
-    project_name: business.projectName, services_or_property_types: business.servicesOrPropertyTypes, approved_faq: business.approvedFaq, qualification_questions: business.qualificationQuestions, escalation_rules: business.escalationRules, cal_event_type_id: business.calEventTypeId, retell_agent_id: business.retellAgentId,
+    project_name: business.projectName, services_or_property_types: business.servicesOrPropertyTypes, approved_faq: business.approvedFaq, qualification_questions: business.qualificationQuestions, escalation_rules: business.escalationRules,
+    cal_event_type_id: connected.calEventTypeId, retell_agent_id: connected.retellAgentId,
     vertical: getProfile(business.vertical).id, notify_email: business.notifyEmail, service_area_zips: business.serviceAreaZips, pricing_policy: business.pricingPolicy,
   }));
 });
@@ -1463,10 +1527,12 @@ router.patch("/business-settings", requireRole(...ADMIN_ROLES), async (req, res)
     vertical: body.data.vertical, notifyEmail, serviceAreaZips: body.data.service_area_zips, pricingPolicy: body.data.pricing_policy, updatedAt: new Date(),
   }).where(eq(businessesTable.id, BUSINESS_ID)).returning();
   if (!updated) { res.status(404).json({ error: "Business not found" }); return; }
+  const connected = await resolveConnectedServices(BUSINESS_ID, updated);
   res.json(UpdateBusinessSettingsResponse.parse({
     id: updated.id, name: updated.name, market: updated.market, timezone: updated.timezone, phone_number: updated.phoneNumber, transfer_number: updated.transferNumber,
     recording_disclosure: updated.recordingDisclosure, ai_disclosure: updated.aiDisclosure, quiet_hours: updated.quietHours, max_call_attempts: updated.maxCallAttempts, suppression_enabled: updated.suppressionEnabled,
-    project_name: updated.projectName, services_or_property_types: updated.servicesOrPropertyTypes, approved_faq: updated.approvedFaq, qualification_questions: updated.qualificationQuestions, escalation_rules: updated.escalationRules, cal_event_type_id: updated.calEventTypeId, retell_agent_id: updated.retellAgentId,
+    project_name: updated.projectName, services_or_property_types: updated.servicesOrPropertyTypes, approved_faq: updated.approvedFaq, qualification_questions: updated.qualificationQuestions, escalation_rules: updated.escalationRules,
+    cal_event_type_id: connected.calEventTypeId, retell_agent_id: connected.retellAgentId,
     vertical: getProfile(updated.vertical).id, notify_email: updated.notifyEmail, service_area_zips: updated.serviceAreaZips, pricing_policy: updated.pricingPolicy,
   }));
 });

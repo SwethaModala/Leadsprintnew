@@ -947,6 +947,9 @@ export interface CreateAgentRequest {
   language?: string;
   temperature?: number;
   create_retell?: boolean;
+  retell_agent_id?: string;
+  retell_llm_id?: string;
+  status?: AgentStatus;
 }
 
 export interface UpdateAgentRequest {
@@ -1006,6 +1009,7 @@ export interface RetellRemoteAgentListResponse {
 export interface RetellLinkRequest {
   retell_agent_id: string;
   retell_llm_id?: string;
+  status?: AgentStatus;
 }
 
 export interface RetellLinkResult {

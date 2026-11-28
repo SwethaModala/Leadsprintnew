@@ -7,6 +7,7 @@ import {
   Pause,
   Play,
   Plus,
+  Radio,
   RefreshCw,
   Search,
 } from 'lucide-react';
@@ -23,6 +24,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/common';
+import { DiscoverRetellAgentModal } from '@/components/DiscoverRetellAgentModal';
 import {
   useGetAgents,
   usePostAgents,
@@ -44,6 +46,7 @@ export default function AgentsPage() {
   const [search, setSearch] = useState('');
   const [selectedStatus, setSelectedStatus] = useState('all');
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [isDiscoverModalOpen, setIsDiscoverModalOpen] = useState(false);
 
   const { data: agentsData, isLoading, refetch } = useGetAgents();
   const { data: phoneData, refetch: refetchPhones } = useGetPhoneNumbers();
@@ -98,6 +101,15 @@ export default function AgentsPage() {
         description="Manage LeadSprint AI agents and their Retell voice configurations."
         action={
           <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setIsDiscoverModalOpen(true)}
+              data-testid="button-discover-retell-agents"
+            >
+              <Radio size={14} className="text-[hsl(var(--primary))]" />
+              Discover Retell agents
+            </Button>
             <Button
               variant="secondary"
               size="sm"
@@ -283,6 +295,20 @@ export default function AgentsPage() {
           Failed to create agent. Please try again.
         </p>
       )}
+
+      <DiscoverRetellAgentModal
+        isOpen={isDiscoverModalOpen}
+        onClose={() => setIsDiscoverModalOpen(false)}
+        onSuccess={() => {
+          refetch();
+          refetchPhones();
+        }}
+        existingAgents={agents.map((a) => ({
+          id: a.id,
+          name: a.name,
+          retell_agent_id: a.retell_agent_id,
+        }))}
+      />
     </div>
   );
 }

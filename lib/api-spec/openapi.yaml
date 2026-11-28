@@ -1986,6 +1986,9 @@ components:
         language: { type: string }
         temperature: { type: number }
         create_retell: { type: boolean, default: false }
+        retell_agent_id: { type: string }
+        retell_llm_id: { type: string }
+        status: { $ref: "#/components/schemas/AgentStatus" }
       required: [name, use_case]
     UpdateAgentRequest:
       type: object
@@ -2056,6 +2059,7 @@ components:
       properties:
         retell_agent_id: { type: string }
         retell_llm_id: { type: string }
+        status: { $ref: "#/components/schemas/AgentStatus" }
       required: [retell_agent_id]
     RetellLinkResult:
       type: object
