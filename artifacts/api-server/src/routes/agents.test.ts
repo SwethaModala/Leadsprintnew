@@ -7,12 +7,14 @@ import {
   agentVersionsTable,
   businessesTable,
   phoneNumbersTable,
+  providerCredentialsTable,
   usersTable,
 } from "@workspace/db";
 import { createTestDb, pilotBusiness, type TestDb } from "../test/testDb";
 import agentsRouter, { __resetAgentsDb, __setAgentsDb, getTenantRetellKey } from "./agents";
 import * as retellService from "../lib/retellAgentService";
 import { upsertTenantProviderCredential } from "../lib/security";
+import { ProviderRequestError } from "../lib/providers";
 
 const BIZ_A = "biz_agents_alpha";
 const BIZ_B = "biz_agents_beta";
@@ -543,7 +545,7 @@ describe("Phase 3 Agents API", () => {
   });
 
   describe("Retell Agent Discovery and Linking", () => {
-    it("returns 503 when Retell is not configured for tenant", async () => {
+    it("returns 503 when Retell is not configured for tenant (missing credentials)", async () => {
       delete process.env["RETELL_API_KEY"];
       const app = buildApp();
       const res = await request(app)
@@ -556,7 +558,71 @@ describe("Phase 3 Agents API", () => {
       expect(res.body.error).toMatch(/Retell is not configured/i);
     });
 
-    it("lists remote agents from Retell using tenant credentials", async () => {
+    it("returns 503 and fails closed when tenant credentials are undecryptable or corrupted", async () => {
+      // Set global RETELL_API_KEY so we can verify it fails closed and does NOT fall back to global
+      process.env["RETELL_API_KEY"] = "key_test_agents";
+
+      // Insert corrupt encrypted payload in providerCredentialsTable for tenant A
+      await db.insert(providerCredentialsTable).values({
+        id: `cred_${crypto.randomUUID().slice(0, 12)}`,
+        businessId: BIZ_A,
+        provider: "retell",
+        encryptedConfig: "v1:corrupt_iv_tag_data:invalid",
+      });
+
+      const app = buildApp();
+      const res = await request(app)
+        .get("/api/agents/retell/remote")
+        .set("x-test-business-id", BIZ_A)
+        .set("x-test-user-id", USER_A_ADMIN)
+        .set("x-test-role", "admin");
+
+      expect(res.status).toBe(503);
+      expect(res.body.error).toMatch(/Retell is not configured for this workspace/i);
+    });
+
+    it("returns 502 with safe actionable error when Retell rejects API key (invalid/rejected key)", async () => {
+      vi.spyOn(retellService, "listRetellAgents").mockRejectedValue(
+        new ProviderRequestError(
+          'Retell agent list failed: Retell API error (401): {"message":"Invalid API Key: key_super_secret_999"}',
+        ),
+      );
+
+      const app = buildApp();
+      const res = await request(app)
+        .get("/api/agents/retell/remote")
+        .set("x-test-business-id", BIZ_A)
+        .set("x-test-user-id", USER_A_ADMIN)
+        .set("x-test-role", "admin");
+
+      expect(res.status).toBe(502);
+      expect(res.body.error).toBe(
+        "Failed to authenticate with Retell. Verify your Retell API key is valid and active.",
+      );
+      // Ensure no raw keys, auth headers, or sensitive provider response data leaked
+      expect(JSON.stringify(res.body)).not.toMatch(/key_super_secret_999/);
+      expect(JSON.stringify(res.body)).not.toMatch(/401/);
+    });
+
+    it("returns 502 with safe actionable error when Retell network request fails", async () => {
+      vi.spyOn(retellService, "listRetellAgents").mockRejectedValue(
+        new ProviderRequestError("Retell agent list failed: fetch failed"),
+      );
+
+      const app = buildApp();
+      const res = await request(app)
+        .get("/api/agents/retell/remote")
+        .set("x-test-business-id", BIZ_A)
+        .set("x-test-user-id", USER_A_ADMIN)
+        .set("x-test-role", "admin");
+
+      expect(res.status).toBe(502);
+      expect(res.body.error).toBe(
+        "Failed to connect to Retell API. Please check network connectivity and try again.",
+      );
+    });
+
+    it("lists remote agents from Retell on successful agent discovery", async () => {
       vi.spyOn(retellService, "listRetellAgents").mockResolvedValue([
         {
           retell_agent_id: "agent_remote_999",

@@ -78,6 +78,24 @@ export async function getTenantRetellKey(businessId: string): Promise<string | u
   return providerConfig().retell.apiKey;
 }
 
+function formatSafeRetellErrorMessage(err: ProviderRequestError): string {
+  const msg = err.message || "";
+  if (
+    msg.includes("401") ||
+    msg.includes("403") ||
+    /unauthorized|forbidden|invalid.*key|authentication/i.test(msg)
+  ) {
+    return "Failed to authenticate with Retell. Verify your Retell API key is valid and active.";
+  }
+  if (msg.includes("429") || /rate limit/i.test(msg)) {
+    return "Retell API rate limit exceeded. Please try again later.";
+  }
+  if (/fetch failed|econnrefused|enotfound|timeout|network/i.test(msg)) {
+    return "Failed to connect to Retell API. Please check network connectivity and try again.";
+  }
+  return "Retell API request failed. Please check your Retell configuration and try again.";
+}
+
 async function verifyRemoteRetellAgentExists(
   businessId: string,
   retellAgentId: string,
@@ -113,7 +131,12 @@ async function verifyRemoteRetellAgentExists(
     return {
       ok: false,
       status: 502,
-      error: err instanceof Error ? err.message : "Failed to verify Retell agent with provider.",
+      error:
+        err instanceof ProviderRequestError
+          ? formatSafeRetellErrorMessage(err)
+          : err instanceof Error
+            ? err.message
+            : "Failed to verify Retell agent with provider.",
     };
   }
 }
@@ -302,6 +325,11 @@ router.get("/agents/retell/remote", requireRole("admin", "owner"), async (req, r
   } catch (err) {
     if (err instanceof ProviderNotConfiguredError) {
       res.status(503).json({ error: "Retell is not configured for this workspace" });
+      return;
+    }
+    if (err instanceof ProviderRequestError) {
+      req.log?.warn?.({ err: err.message }, "Retell remote discovery provider failure");
+      res.status(502).json({ error: formatSafeRetellErrorMessage(err) });
       return;
     }
     next(err);
